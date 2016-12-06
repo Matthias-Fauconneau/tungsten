@@ -13,3 +13,13 @@
 !/src/
 !/data/
 !/cmake/
+*.cmake
+CMakeFiles
+Makefile
+src/thirdparty/embree/config.h
+src/thirdparty/embree/hash
+src/thirdparty/embree/rtcore.h
+src/thirdparty/embree/rtcore.isph
+src/thirdparty/embree/version.h
+
+
