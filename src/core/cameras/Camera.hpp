@@ -52,7 +52,8 @@ protected:
 
     OutputBufferSettings _colorBufferSettings;
 
-    std::unique_ptr<OutputBufferVec3f> _colorBuffer;
+public: std::unique_ptr<OutputBufferVec3f> _colorBuffer;
+protected:
     std::unique_ptr<OutputBufferF>     _depthBuffer;
     std::unique_ptr<OutputBufferVec3f> _normalBuffer;
     std::unique_ptr<OutputBufferVec3f> _albedoBuffer;

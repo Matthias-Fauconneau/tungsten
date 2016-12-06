@@ -6653,6 +6653,7 @@ static int check_acl(struct mg_context *ctx, uint32_t remote_ip)
 }
 
 #if !defined(_WIN32)
+
 static int set_uid_option(struct mg_context *ctx)
 {
     struct passwd *pw;
@@ -6666,8 +6667,6 @@ static int set_uid_option(struct mg_context *ctx)
             mg_cry(fc(ctx), "%s: unknown user [%s]", __func__, uid);
         } else if (setgid(pw->pw_gid) == -1) {
             mg_cry(fc(ctx), "%s: setgid(%s): %s", __func__, uid, strerror(errno));
-        } else if (setgroups(0, NULL)) {
-            mg_cry(fc(ctx), "%s: setgroups(): %s", __func__, strerror(errno));
         } else if (setuid(pw->pw_uid) == -1) {
             mg_cry(fc(ctx), "%s: setuid(%s): %s", __func__, uid, strerror(errno));
         } else {

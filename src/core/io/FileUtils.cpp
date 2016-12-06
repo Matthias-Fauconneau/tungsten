@@ -1,8 +1,6 @@
 #include "FileUtils.hpp"
 #include "FileStreambuf.hpp"
 #include "UnicodeUtils.hpp"
-#include "ZipStreambuf.hpp"
-#include "ZipReader.hpp"
 #include "Path.hpp"
 
 #include "Debug.hpp"
@@ -78,48 +76,6 @@ static bool execNativeStat(const Path &p, NativeStatStruct &dst)
     return stat64(p.absolute().asString().c_str(), &dst) == 0;
 }
 #endif
-
-class OpenZipArchiveDir : public OpenDir
-{
-    std::shared_ptr<ZipReader> _archive;
-    const ZipEntry &_entry;
-    int _index;
-
-public:
-    OpenZipArchiveDir(std::shared_ptr<ZipReader> archive, const ZipEntry &entry)
-    : _archive(archive),
-      _entry(entry),
-      _index(0)
-    {
-    }
-
-    virtual bool increment(Path &dst, Path &parent, std::function<bool(const Path &)> acceptor) override final
-    {
-        if (_archive) {
-            while (true) {
-                if (_index == int(_entry.contents.size())) {
-                    _archive.reset();
-                    return false;
-                }
-                const ZipEntry &entry = _archive->entry(_entry.contents[_index++]);
-
-                Path path = parent/entry.name;
-                if (!acceptor(path))
-                    continue;
-                dst = path;
-
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    virtual bool open() const override final
-    {
-        return _archive.operator bool();
-    }
-};
 
 class OpenFileSystemDir : public OpenDir
 {
@@ -286,74 +242,6 @@ OutputStreamHandle FileUtils::openFileOutputStream(const Path &p)
     return std::move(out);
 }
 
-std::shared_ptr<ZipReader> FileUtils::openArchive(const Path &p)
-{
-    Path key = p.normalize();
-    auto iter = _archives.find(key);
-    if (iter != _archives.end())
-        return iter->second;
-
-    std::shared_ptr<ZipReader> archive;
-    try {
-        archive = std::make_shared<ZipReader>(p);
-    } catch (const std::runtime_error &) {
-        return nullptr;
-    }
-
-    _archives.insert(std::make_pair(key, archive));
-    return std::move(archive);
-}
-
-bool FileUtils::recursiveArchiveFind(const Path &p, std::shared_ptr<ZipReader> &archive,
-        const ZipEntry *&entry)
-{
-    if (!archive) {
-        Path stem = p.normalize().parent().stripSeparator();
-        Path leaf = p.fileName();
-        while (!stem.empty()) {
-            NativeStatStruct stat;
-            if (execNativeStat(stem, stat)) {
-                if (S_ISREG(stat.st_mode)) {
-                    archive = openArchive(stem);
-                    if (archive)
-                        return recursiveArchiveFind(leaf, archive, entry);
-                    else
-                        return false;
-                } else {
-                    return false;
-                }
-            }
-            leaf = stem.fileName()/leaf;
-            stem = stem.parent().stripSeparator();
-        }
-    } else {
-        entry = archive->findEntry(p);
-        if (entry)
-            return true;
-
-        Path stem = p.parent().stripSeparator();
-        Path leaf = p.fileName();
-        while (!stem.empty()) {
-            const ZipEntry *nestedZip = archive->findEntry(stem);
-            if (nestedZip) {
-                if (!nestedZip->isDirectory) {
-                    archive = openArchive(archive->path()/stem);
-                    if (archive)
-                        return recursiveArchiveFind(leaf, archive, entry);
-                    else
-                        return false;
-                } else{
-                    return false;
-                }
-            }
-            leaf = stem.fileName()/leaf;
-            stem = stem.parent().stripSeparator();
-        }
-    }
-
-    return false;
-}
-
 bool FileUtils::execStat(const Path &p, StatStruct &dst)
 {
     NativeStatStruct stat;
@@ -361,15 +249,6 @@ bool FileUtils::execStat(const Path &p, StatStruct &dst)
         dst.size        = stat.st_size;
         dst.isDirectory = S_ISDIR(stat.st_mode);
         dst.isFile      = S_ISREG(stat.st_mode);
-        return true;
-    }
-
-    std::shared_ptr<ZipReader> archive;
-    const ZipEntry *entry = nullptr;
-    if (recursiveArchiveFind(p, archive, entry)) {
-        dst.size        = entry->size;
-        dst.isDirectory = entry->isDirectory;
-        dst.isFile      = !entry->isDirectory;
         return true;
     }
 
@@ -560,20 +439,6 @@ InputStreamHandle FileUtils::openInputStream(const Path &p)
         return std::move(in);
     }
 
-    std::shared_ptr<ZipReader> archive;
-    const ZipEntry *entry = nullptr;
-    if (recursiveArchiveFind(p, archive, entry)) {
-        std::unique_ptr<ZipInputStreambuf> streambuf = archive->openStreambuf(*entry);
-        if (!streambuf)
-            return nullptr;
-
-        std::shared_ptr<std::istream> in(new std::istream(streambuf.get()),
-                [](std::istream *stream){ finalizeStream(stream); });
-        _metaData.insert(std::make_pair(in.get(), StreamMetadata(std::move(streambuf), std::move(archive))));
-
-        return std::move(in);
-    }
-
     return nullptr;
 }
 
@@ -601,28 +466,10 @@ std::shared_ptr<OpenDir> FileUtils::openDirectory(const Path &p)
 {
     NativeStatStruct info;
     if (execNativeStat(p, info)) {
-        if (S_ISREG(info.st_mode)) {
-            std::shared_ptr<ZipReader> archive = openArchive(p);
-            if (!archive)
-                return nullptr;
-            return std::make_shared<OpenZipArchiveDir>(std::move(archive), *archive->findEntry("."));
-        } else if (S_ISDIR(info.st_mode))
+        if (S_ISDIR(info.st_mode))
             return std::make_shared<OpenFileSystemDir>(p);
         else
             return nullptr;
-    }
-
-    std::shared_ptr<ZipReader> archive;
-    const ZipEntry *entry = nullptr;
-    if (recursiveArchiveFind(p, archive, entry)) {
-        if (entry->isDirectory) {
-            return std::make_shared<OpenZipArchiveDir>(std::move(archive), *entry);
-        } else {
-            std::shared_ptr<ZipReader> archive = openArchive(p);
-            if (!archive)
-                return nullptr;
-            return std::make_shared<OpenZipArchiveDir>(std::move(archive), *archive->findEntry("."));
-        }
     }
 
     return nullptr;

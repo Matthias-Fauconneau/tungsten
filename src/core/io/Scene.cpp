@@ -14,7 +14,6 @@
 #include "integrators/path_tracer/PathTraceIntegrator.hpp"
 #include "integrators/photon_map/PhotonMapIntegrator.hpp"
 
-#include "primitives/mc-loader/TraceableMinecraftMap.hpp"
 #include "primitives/InfiniteSphereCap.hpp"
 #include "primitives/InfiniteSphere.hpp"
 #include "primitives/TriangleMesh.hpp"
@@ -234,8 +233,6 @@ std::shared_ptr<Primitive> Scene::instantiatePrimitive(std::string type, const r
         result = std::make_shared<Curves>();
     else if (type == "cube")
         result = std::make_shared<Cube>();
-    else if (type == "minecraft_map")
-        result = std::make_shared<MinecraftLoader::TraceableMinecraftMap>();
     else if (type == "skydome")
         result = std::make_shared<Skydome>();
     else if (type == "point")

@@ -68,11 +68,10 @@ add_definitions(-DSTBI_NO_STDIO=1)
 add_definitions(-DLODEPNG_NO_COMPILE_DISK=1)
 add_definitions(-DUSE_IPV6=1)
 add_library(thirdparty STATIC
-		src/thirdparty/civetweb/civetweb.c
 		src/thirdparty/lodepng/lodepng.cpp
 		src/thirdparty/sobol/sobol.cpp
 		src/thirdparty/stbi/stb_image.c
-		src/thirdparty/miniz/miniz.c
+                #src/thirdparty/miniz/miniz.c
 		src/thirdparty/skylight/ArHosekSkyModel.cpp)
 
 if (CMAKE_COMPILER_IS_GNUCXX)
@@ -83,15 +82,7 @@ set(core_libs core thirdparty embree)
 
 include_directories(src/core src/thirdparty src/thirdparty/embree/include src)
 
-find_package(OpenEXR)
-if (OPENEXR_FOUND)
-    message(STATUS "OpenEXR detected. Building with .exr support")
-    add_definitions(-DOPENEXR_AVAILABLE)
-    include_directories(${OPENEXR_INCLUDE_DIR})
-    set(core_libs ${core_libs} ${OPENEXR_LIBRARIES})
-else()
-    message(STATUS "No OpenEXR detected. Building without .exr support")
-endif()
+message(STATUS "OpenEXR headers are incompatible with C++1z. Building without .exr support")
 
 find_package(JPEG)
 if (JPEG_FOUND)
@@ -118,66 +109,26 @@ else()
     endif()
 endif()
 
+file(GLOB_RECURSE Serenity_Core_SOURCES "serenity/core/*.cc")
+add_library(serenity_core STATIC ${Serenity_Core_SOURCES})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/serenity/core")
+set(core_libs ${core_libs} serenity_core)
+
+include_directories(/usr/include/freetype2)
+file(GLOB_RECURSE Serenity_IO_SOURCES "serenity/io/*.cc")
+add_library(serenity_io STATIC ${Serenity_IO_SOURCES})
+target_link_libraries(serenity_io freetype)
+set(core_libs ${core_libs} serenity_io)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/serenity/io")
+
+file(GLOB_RECURSE Serenity_UI_SOURCES "serenity/ui/*.cc")
+add_library(serenity_ui STATIC ${Serenity_UI_SOURCES})
+target_link_libraries(serenity_ui serenity_core serenity_io)
+set(core_libs ${core_libs} serenity_ui)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/serenity/ui")
+
 file(GLOB_RECURSE Core_SOURCES "src/core/*.cpp")
 add_library(core STATIC ${Core_SOURCES})
 
-add_executable(obj2json src/obj2json/obj2json.cpp)
-target_link_libraries(obj2json ${core_libs})
-
-add_executable(json2xml src/json2xml/json2xml.cpp)
-target_link_libraries(json2xml ${core_libs})
-
-add_executable(scenemanip src/scenemanip/scenemanip.cpp)
-target_link_libraries(scenemanip ${core_libs})
-
-add_executable(hdrmanip src/hdrmanip/hdrmanip.cpp)
-target_link_libraries(hdrmanip ${core_libs})
-
-add_executable(denoiser src/denoiser/denoiser.cpp)
-target_link_libraries(denoiser ${core_libs})
-
 add_executable(tungsten src/tungsten/tungsten.cpp)
 target_link_libraries(tungsten ${core_libs})
-
-if (WIN32)
-    set(socket_libs wsock32 Ws2_32)
-else()
-    set(socket_libs "")
-endif()
-
-add_executable(tungsten_server src/tungsten-server/tungsten-server.cpp)
-target_link_libraries(tungsten_server ${core_libs} ${socket_libs})
-
-find_package(OpenGL)
-find_package(Qt5Widgets)
-find_package(Qt5OpenGL)
-if (OPENGL_FOUND AND Qt5Widgets_FOUND)
-    include_directories(${OPENGL_INCLUDE_DIR})
-    set(opengl_libs ${OPENGL_LIBRARIES})
-    
-    file(GLOB_RECURSE Editor_SOURCES "src/editor/*.cpp")
-    if (APPLE)
-        list(APPEND Editor_SOURCES "src/editor/CoreProfileAttributes.mm")
-    endif()
-    file(GLOB_RECURSE Data_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "data/*")
-    foreach (data ${Data_FILES})
-        configure_file(${data} ${CMAKE_CURRENT_BINARY_DIR}/${data} COPYONLY)
-    endforeach(data)
-    add_executable(editor ${Editor_SOURCES} src/editor/resources/Tungsten.rc)
-    set_target_properties(editor PROPERTIES AUTOMOC TRUE)
-    qt5_use_modules(editor Widgets OpenGL)
-    target_link_libraries(editor ${core_libs} ${opengl_libs} Qt5::Widgets Qt5::OpenGL)
-    if (APPLE)
-        find_library(APPKIT NAMES AppKit) 
-        target_link_libraries(editor ${APPKIT})
-    endif()
-    message(STATUS "Building editor")
-else()
-    if (NOT Qt5Widgets_FOUND)
-        message(STATUS "Qt5 not found. Editor will not be built")
-    endif()
-    if (NOT OPENGL_FOUND)
-        message(STATUS "OpenGL not found. Editor will not be built")
-    endif()
-endif()
-

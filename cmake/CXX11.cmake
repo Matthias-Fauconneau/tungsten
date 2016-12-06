@@ -35,7 +35,7 @@ endmacro()
 # Sets the appropriate flag to enable C++11 support
 macro(enable_cxx11)
     if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++1z")
     endif()
 endmacro()
 

@@ -18,6 +18,11 @@
 #include <lodepng/lodepng.h>
 #include <algorithm>
 
+#include "image.h"
+#include "interface.h"
+#include "window.h"
+extern Thread mainThread;
+
 namespace Tungsten {
 
 static Path incrementalFilename(const Path &dstFile, const std::string &suffix, bool overwrite)
@@ -56,16 +61,22 @@ void Integrator::writeBuffers(const std::string &suffix, bool overwrite)
 {
     Vec2u res = _scene->cam().resolution();
     std::unique_ptr<Vec3f[]> hdr(new Vec3f[res.product()]);
-    std::unique_ptr<Vec3c[]> ldr(new Vec3c[res.product()]);
+    //std::unique_ptr<Vec3c[]> ldr(new Vec3c[res.product()]);
 
     for (uint32 y = 0; y < res.y(); ++y)
         for (uint32 x = 0; x < res.x(); ++x)
             hdr[x + y*res.x()] = _scene->cam().getLinear(x, y);
 
-    for (uint32 i = 0; i < res.product(); ++i)
-        ldr[i] = Vec3c(clamp(Vec3i(_scene->cam().tonemap(hdr[i])*255.0f), Vec3i(0), Vec3i(255)));
+    Image image(res.x(), res.y());
+    for (uint32 i = 0; i < res.product(); ++i) {
+        Vec3c v(clamp(Vec3i(_scene->cam().tonemap(hdr[i])*255.0f), Vec3i(0), Vec3i(255)));
+        image[i] = byte4(v[2], v[1], v[0], 0xFF);
+    }
 
-    const RendererSettings &settings = _scene->rendererSettings();
+    ImageView view = ::move(image);
+    unique<Window> window = ::window(&view);
+    mainThread.run();
+    /*const RendererSettings &settings = _scene->rendererSettings();
 
     if (!settings.outputFile().empty())
         ImageIO::saveLdr(incrementalFilename(settings.outputFile(), suffix, overwrite),
@@ -75,7 +86,7 @@ void Integrator::writeBuffers(const std::string &suffix, bool overwrite)
                 &hdr[0].x(), res.x(), res.y(), 3);
 
     if (suffix.empty() && !settings.renderOutputs().empty())
-        _scene->cam().saveOutputBuffers();
+        _scene->cam().saveOutputBuffers();*/
 }
 
 void Integrator::saveOutputs()

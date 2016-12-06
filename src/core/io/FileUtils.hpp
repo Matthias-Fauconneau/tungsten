@@ -1,7 +1,6 @@
 #ifndef FILEUTILS_HPP_
 #define FILEUTILS_HPP_
 
-#include "ZipEntry.hpp"
 #include "Path.hpp"
 
 #include "IntTypes.hpp"
@@ -74,11 +73,6 @@ class FileUtils
 
     static void finalizeStream(std::ios *stream);
     static OutputStreamHandle openFileOutputStream(const Path &p);
-
-    static std::shared_ptr<ZipReader> openArchive(const Path &p);
-
-    static bool recursiveArchiveFind(const Path &p, std::shared_ptr<ZipReader> &archive,
-            const ZipEntry *&entry);
 
     static bool execStat(const Path &p, StatStruct &dst);
 
