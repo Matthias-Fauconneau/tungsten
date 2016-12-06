@@ -556,7 +556,7 @@ void TriangleMesh::prepareForRender()
 void TriangleMesh::teardownAfterRender()
 {
     if (_scene)  {
-        rtcDeleteGeometry(_scene, _geomId);
+        //rtcDeleteGeometry(_scene, _geomId); FIXME: crashes
         rtcDeleteScene(_scene);
         _scene = nullptr;
     }
