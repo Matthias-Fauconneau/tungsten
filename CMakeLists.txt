@@ -127,6 +127,8 @@ target_link_libraries(serenity_ui serenity_core serenity_io)
 set(core_libs ${core_libs} serenity_ui)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/serenity/ui")
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/serenity")
+
 file(GLOB_RECURSE Core_SOURCES "src/core/*.cpp")
 add_library(core STATIC ${Core_SOURCES})
 

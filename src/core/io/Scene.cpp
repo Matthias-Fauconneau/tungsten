@@ -31,9 +31,6 @@
 #include "materials/DiskTexture.hpp"
 #include "materials/IesTexture.hpp"
 
-#include "cameras/EquirectangularCamera.hpp"
-#include "cameras/ThinlensCamera.hpp"
-#include "cameras/CubemapCamera.hpp"
 #include "cameras/PinholeCamera.hpp"
 
 #include "media/HomogeneousMedium.hpp"
@@ -251,12 +248,6 @@ std::shared_ptr<Camera> Scene::instantiateCamera(std::string type, const rapidjs
     std::shared_ptr<Camera> result;
     if (type == "pinhole")
         result = std::make_shared<PinholeCamera>();
-    else if (type == "thinlens")
-        result = std::make_shared<ThinlensCamera>();
-    else if (type == "equirectangular")
-        result = std::make_shared<EquirectangularCamera>();
-    else if (type == "cubemap")
-        result = std::make_shared<CubemapCamera>();
     else {
         DBG("Unknown camera type: '%s'", type.c_str());
         return nullptr;

@@ -181,7 +181,6 @@ template<> void __attribute((noreturn)) error(const string& message) {
 }
 
 // Entry point
-#if 0
 int argc; char** argv;
 int main(int argc, char** argv) {
  ::argc = argc, ::argv = argv;
@@ -194,7 +193,6 @@ int main(int argc, char** argv) {
  mainThread.run(); // Reuses main thread as default event loop runner when not overriden in Poll constructor
  return groupExitStatus; // Destroys all file-scope objects (libc atexit handlers) and terminates using exit_group
 }
-#endif
 
 void requestTermination(int status) {
  if(status) groupExitStatus = status;

@@ -91,7 +91,7 @@ rapidjson::Value Camera::toJson(Allocator &allocator) const
     return result;
 }
 
-bool Camera::samplePosition(PathSampleGenerator &/*sampler*/, PositionSample &/*sample*/) const
+bool Camera::samplePosition(PathSampleGenerator &/*sampler*/, PositionSample &/*sample*/, Vec2u pixel) const
 {
     return false;
 }

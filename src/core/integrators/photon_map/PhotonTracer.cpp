@@ -126,7 +126,7 @@ Vec3f PhotonTracer::traceSample(Vec2u pixel, const KdTree<Photon> &surfaceTree,
         float gatherRadius, float volumeGatherRadius)
 {
     PositionSample point;
-    if (!_scene->cam().samplePosition(sampler, point))
+    if (!_scene->cam().samplePosition(sampler, point, pixel))
         return Vec3f(0.0f);
     DirectionSample direction;
     if (!_scene->cam().sampleDirection(sampler, point, pixel, direction))

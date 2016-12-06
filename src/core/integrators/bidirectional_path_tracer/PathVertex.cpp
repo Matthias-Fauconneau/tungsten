@@ -46,7 +46,7 @@ bool PathVertex::sampleRootVertex(TraceState &state)
         return true;
     } case CameraVertex: {
         CameraRecord &record = _record.camera;
-        if (!_sampler.camera->samplePosition(state.sampler, record.point))
+        if (!_sampler.camera->samplePosition(state.sampler, record.point, record.pixel))
             return false;
 
         _throughput = record.point.weight;

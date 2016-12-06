@@ -22,6 +22,7 @@
 #include "interface.h"
 #include "window.h"
 extern Thread mainThread;
+Image image;
 
 namespace Tungsten {
 
@@ -67,15 +68,12 @@ void Integrator::writeBuffers(const std::string &suffix, bool overwrite)
         for (uint32 x = 0; x < res.x(); ++x)
             hdr[x + y*res.x()] = _scene->cam().getLinear(x, y);
 
-    Image image(res.x(), res.y());
+    image = Image(res.x(), res.y());
     for (uint32 i = 0; i < res.product(); ++i) {
         Vec3c v(clamp(Vec3i(_scene->cam().tonemap(hdr[i])*255.0f), Vec3i(0), Vec3i(255)));
         image[i] = byte4(v[2], v[1], v[0], 0xFF);
     }
 
-    ImageView view = ::move(image);
-    unique<Window> window = ::window(&view);
-    mainThread.run();
     /*const RendererSettings &settings = _scene->rendererSettings();
 
     if (!settings.outputFile().empty())

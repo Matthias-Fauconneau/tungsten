@@ -10,24 +10,7 @@
 #include <cmath>
 
 #include "matrix.h"
-static mat4 shearedPerspective(const float s, const float t) { // Sheared perspective (rectification)
-    const float S = 2*s-1, T = 2*t-1; // [0,1] -> [-1, 1]
-    const float left = (-1-S), right = (1-S);
-    const float bottom = (-1-T), top = (1-T);
-    mat4 M;
-    M(0,0) = 2 / (right-left);
-    M(1,1) = 2 / (top-bottom);
-    M(0,2) = (right+left) / (right-left);
-    M(1,2) = (top+bottom) / (top-bottom);
-    const float near = 1-1./2, far = 1+1./2;
-    M(2,2) = - (far+near) / (far-near);
-    M(2,3) = - 2*far*near / (far-near);
-    M(3,2) = - 1;
-    M(3,3) = 0;
-    M.translate(vec3(-S,-T,0));
-    M.translate(vec3(0,0,-1)); // 0 -> -1 (Z-)
-    return M;
-}
+mat4 M;
 
 namespace Tungsten {
 
@@ -70,9 +53,13 @@ rapidjson::Value PinholeCamera::toJson(Allocator &allocator) const
     };
 }
 
-bool PinholeCamera::samplePosition(PathSampleGenerator &/*sampler*/, PositionSample &sample) const
+bool PinholeCamera::samplePosition(PathSampleGenerator &/*sampler*/, PositionSample &sample, Vec2u pixel) const
 {
-    sample.p = _pos;
+    //sample.p = 0; //_pos;
+    const vec3 O =  M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, 2.f*pixel.y()/float(_res.y()-1)-1, -1);
+    sample.p.x() = O.x;
+    sample.p.y() = O.y;
+    sample.p.z() = O.z;
     sample.weight = Vec3f(1.0f);
     sample.pdf = 1.0f;
     sample.Ng = _transform.fwd();
@@ -97,16 +84,6 @@ bool PinholeCamera::sampleDirection(PathSampleGenerator &sampler, const Position
         _ratio - (float(pixel.y()) + 0.5f + uv.y())*2.0f*_pixelSize.x(),
         _planeDist
     ).normalized();
-
-    mat4 transform;
-    transform.rotateX(-PI/5);
-    transform.rotateX(PI);
-    transform.rotateY(PI/2);
-
-    // Sheared perspective (rectification)
-    const vec2 angles = 0;
-    const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
-    const mat4 M = shearedPerspective(s, t) * transform;
 
     const vec3 O = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, 2.f*pixel.y()/float(_res.y()-1)-1, -1);
     const vec3 P = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, 2.f*pixel.y()/float(_res.y()-1)-1, +1);
