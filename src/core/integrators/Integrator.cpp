@@ -18,13 +18,6 @@
 #include <lodepng/lodepng.h>
 #include <algorithm>
 
-#include "image.h"
-#include "interface.h"
-#include "window.h"
-extern Thread mainThread;
-ImageF B, G, R;
-Image image;
-
 namespace Tungsten {
 
 static Path incrementalFilename(const Path &dstFile, const std::string &suffix, bool overwrite)
@@ -57,46 +50,6 @@ Integrator::~Integrator()
 void Integrator::advanceSpp()
 {
     _nextSpp = min(_currentSpp + _scene->rendererSettings().sppStep(), _scene->rendererSettings().spp());
-}
-
-void Integrator::writeBuffers(const std::string&, bool)
-{
-    Vec2u res = _scene->cam().resolution();
-#if 1
-    if(!B) B = ImageF(res.x(), res.y());
-    if(!G) G = ImageF(res.x(), res.y());
-    if(!R) R = ImageF(res.x(), res.y());
-    assert_(!_scene->cam()._colorBuffer->_bufferB);
-    for(uint32 i: range(B.ref::size)) {
-        Vec3f bgr = _scene->cam()._colorBuffer->_bufferA[i];
-        B[i] = bgr[2];
-        G[i] = bgr[1];
-        R[i] = bgr[0];
-    }
-#endif
-#if 1
-    std::unique_ptr<Vec3f[]> hdr(new Vec3f[res.product()]);
-
-    for (uint32 y = 0; y < res.y(); ++y)
-        for (uint32 x = 0; x < res.x(); ++x)
-            hdr[x + y*res.x()] = _scene->cam().getLinear(x, y);
-
-    image = Image(res.x(), res.y());
-    for (uint32 i = 0; i < res.product(); ++i) {
-        Vec3c v(clamp(Vec3i(_scene->cam().tonemap(hdr[i])*255.0f), Vec3i(0), Vec3i(255)));
-        image[i] = byte4(v[2], v[1], v[0], 0xFF);
-    }
-#endif
-}
-
-void Integrator::saveOutputs()
-{
-    writeBuffers("", _scene->rendererSettings().overwriteOutputFiles());
-}
-
-void Integrator::saveCheckpoint()
-{
-    writeBuffers("_checkpoint", true);
 }
 
 // Computes a hash of everything in the scene except the renderer settings

@@ -22,6 +22,9 @@
 #include <vector>
 #include <memory>
 
+#include "matrix.h"
+#undef Type
+
 namespace Tungsten {
 
 class Ray;
@@ -30,8 +33,10 @@ class Medium;
 class Renderer;
 class SampleGenerator;
 
-class Camera : public JsonSerializable
+struct Camera : public JsonSerializable
 {
+    mat4 M;
+
     std::string _tonemapString;
 
     Tonemap::Type _tonemapOp;

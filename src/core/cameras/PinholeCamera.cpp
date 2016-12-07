@@ -9,9 +9,6 @@
 
 #include <cmath>
 
-#include "matrix.h"
-mat4 M;
-
 namespace Tungsten {
 
 PinholeCamera::PinholeCamera()

@@ -39,8 +39,8 @@ public:
       _enableResumeRender(false),
       _useSceneBvh(true),
       _useSobol(true),
-      _spp(32),
-      _sppStep(16),
+      _spp(1),
+      _sppStep(1),
       _checkpointInterval("0"),
       _timeout("0")
     {
