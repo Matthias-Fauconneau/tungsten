@@ -62,13 +62,14 @@ const mat4 transform(const Dict& object) {
     const vec3 look_at = Vec3(t.at("look_at"));
     const vec3 position = Vec3(t.at("position"));
     const vec3 z = normalize(look_at - position);
+    //log(str(length(look_at - position)));
     vec3 y = Vec3(t.at("up"));
     y = normalize(y - dot(y,z)*z); // Projects up on plane orthogonal to z
     const vec3 x = cross(y, z);
     transform[0] = vec4(x, 0);
     transform[1] = vec4(y, 0);
     transform[2] = vec4(z, 0);
-    transform[3] = vec4(-position, 1);
+    transform[3] = vec4(-(position+16.f*z), 1);
 #else
     if(t.contains("position")) {
         ref<Variant> position = t.at("position");
@@ -106,7 +107,8 @@ mat4 parseCamera(ref<byte> file) {
     M(3,2) = -(far*near)/(far-near);
     M(3,3) = 0;
     return M * modelView;*/
-    modelView.rotateZ(PI); // -Z
+    modelView.rotateZ(PI); // -Z (FIXME)
+    modelView = mat4().rotateZ(PI) * modelView;
     return modelView;
 }
 
@@ -119,12 +121,12 @@ static mat4 shearedPerspective(const float s, const float t) { // Sheared perspe
     M(1,1) = 2 / (top-bottom);
     M(0,2) = (right+left) / (right-left);
     M(1,2) = (top+bottom) / (top-bottom);
-    const float near = 1-1./2, far = 1+1./2;
+    const float near = 1, far = 16;
     M(2,2) = - (far+near) / (far-near);
     M(2,3) = - 2*far*near / (far-near);
     M(3,2) = - 1;
     M(3,3) = 0;
-    M.translate(vec3(-S,-T,0));
+    M.translate(vec3(-10*S,-10*T,0));
     M.translate(vec3(0,0,-1)); // 0 -> -1 (Z-)
     return M;
 }

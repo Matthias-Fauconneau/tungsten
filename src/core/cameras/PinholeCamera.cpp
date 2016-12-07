@@ -56,7 +56,7 @@ rapidjson::Value PinholeCamera::toJson(Allocator &allocator) const
 bool PinholeCamera::samplePosition(PathSampleGenerator &/*sampler*/, PositionSample &sample, Vec2u pixel) const
 {
     //sample.p = 0; //_pos;
-    const vec3 O =  M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, 2.f*pixel.y()/float(_res.y()-1)-1, -1);
+    const vec3 O = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, -(2.f*pixel.y()/float(_res.y()-1)-1), -1);
     sample.p.x() = O.x;
     sample.p.y() = O.y;
     sample.p.z() = O.z;
@@ -85,8 +85,8 @@ bool PinholeCamera::sampleDirection(PathSampleGenerator &sampler, const Position
         _planeDist
     ).normalized();
 
-    const vec3 O = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, 2.f*pixel.y()/float(_res.y()-1)-1, -1);
-    const vec3 P = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, 2.f*pixel.y()/float(_res.y()-1)-1, +1);
+    const vec3 O = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, -(2.f*pixel.y()/float(_res.y()-1)-1), -1);
+    const vec3 P = M.inverse() * vec3(2.f*pixel.x()/float(_res.x()-1)-1, -(2.f*pixel.y()/float(_res.y()-1)-1), +1);
     const vec3 d = normalize(P-O);
 
     //sample.d =  _transform.transformVector(localD);
