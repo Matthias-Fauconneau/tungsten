@@ -96,8 +96,8 @@ static mat4 shearedPerspective(const float s, const float t) { // Sheared perspe
     M(2,3) = - 2*far*near / (far-near);
     M(3,2) = - 1;
     M(3,3) = 0;
-    //M.translate(vec3(-10*S,-10*T,0));
-    M.translate(vec3(-S,-T,0));
+    M.translate(vec3(-10*S,-10*T,0));
+    //M.translate(vec3(-S,-T,0));
     M.translate(vec3(0,0,-1)); // 0 -> -1 (Z-)
     return M;
 }
@@ -121,7 +121,7 @@ struct Render {
         assert_(field.size == 4ull*N*N*size.y*size.x);
         //field.clear(); // Explicitly clears to avoid performance skew from clear on page faults (and forces memory allocation)
 
-        mat4 camera = parseCamera(readFile(arguments()[0]));
+        mat4 camera = parseCamera(readFile("scene.json"));
 
         Tungsten::EmbreeUtil::initDevice();
         Tungsten::ThreadUtils::startThreads(8);
@@ -157,10 +157,10 @@ struct Render {
             integrator.waitForCompletion();
             Tungsten::Vec2u res = _scene->camera()->resolution();
             for(uint32 i: range(B.ref::size)) { // FIXME: SIMD
-                Tungsten::Vec3f bgr = _scene->camera()->_colorBuffer->_bufferA[i];
-                B[i] = bgr[2];
-                G[i] = bgr[1];
-                R[i] = bgr[0];
+                Tungsten::Vec3f rgb = _scene->camera()->_colorBuffer->_bufferA[i];
+                R[i] = rgb[0];
+                G[i] = rgb[1];
+                B[i] = rgb[2];
             }
             assert_(renderTime.nanoseconds()*8 > time.nanoseconds()*7, strD(renderTime, time));
             log(time);
@@ -206,7 +206,15 @@ struct ViewApp {
     ViewWidget view {uint2(1024,1024), {this, &ViewApp::render}};
     unique<Window> window = nullptr;
 
+    std::unique_ptr<Tungsten::Scene> _scene;
+
     ViewApp() {
+        Tungsten::EmbreeUtil::initDevice();
+        Tungsten::ThreadUtils::startThreads(8);
+        _scene.reset(Tungsten::Scene::load(Tungsten::Path("scene.json")));
+        _scene->loadResources();
+        _scene->rendererSettings().setSpp(1);
+
         assert_(arguments());
         load(arguments()[0]);
         window = ::window(&view);
@@ -246,10 +254,27 @@ struct ViewApp {
         Image target (targetSize);
 
         const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
-        mat4 M = shearedPerspective(s, t);
+        mat4 camera = parseCamera(readFile("scene.json"));
+        _scene->camera()->M = shearedPerspective(s, t) * camera;
 
         assert_(imageCount.x == imageCount.y);
-
+#if 1
+        using namespace Tungsten;
+        std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
+        _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
+        Tungsten::Integrator& integrator = _flattenedScene->integrator();
+        integrator.startRender([](){});
+        integrator.waitForCompletion();
+        extern uint8 sRGB_forward[0x1000];
+        for(uint i=0; i<target.ref::size; i++) {
+            Tungsten::Vec3f rgb = _scene->camera()->_colorBuffer->_bufferA[i];
+            const uint r = ::min(0xFFFu, uint(0xFFF*rgb[0]));
+            const uint g = ::min(0xFFFu, uint(0xFFF*rgb[1]));
+            const uint b = ::min(0xFFFu, uint(0xFFF*rgb[2]));
+            target[i] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
+        }
+        return unsafeShare(target);
+#else
         parallel_chunk(target.size.y, [this, &target, M](uint, uint start, uint sizeI) {
             const uint targetStride = target.size.x;
             const uint size1 = imageSize.x *1;
@@ -321,6 +346,7 @@ struct ViewApp {
                 //target[targetIndex] = byte4(byte3(float(0xFF)*S), 0xFF);
             }
         });
+#endif
         return target;
     }
 } view;
