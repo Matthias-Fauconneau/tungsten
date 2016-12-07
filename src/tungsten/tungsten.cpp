@@ -1,3 +1,5 @@
+#include "Shared.hpp"
+#define Type typename
 #include "matrix.h"
 #include "interface.h"
 #include "window.h"
@@ -5,9 +7,6 @@
 #include "variant.h"
 #include "simd.h"
 #include "parallel.h"
-#undef Type
-#undef unused
-#include "Shared.hpp"
 
 inline Variant parseJSON(TextData& s) {
     s.whileAny(" \t\n\r"_);
@@ -97,15 +96,16 @@ static mat4 shearedPerspective(const float s, const float t) { // Sheared perspe
     M(2,3) = - 2*far*near / (far-near);
     M(3,2) = - 1;
     M(3,3) = 0;
-    M.translate(vec3(-10*S,-10*T,0));
+    //M.translate(vec3(-10*S,-10*T,0));
+    M.translate(vec3(-S,-T,0));
     M.translate(vec3(0,0,-1)); // 0 -> -1 (Z-)
     return M;
 }
 
-#if 0
+static Folder tmp {"/var/tmp/light",currentWorkingDirectory(), true};
+
 struct Render {
     Render() {
-        static Folder tmp {"/var/tmp/light",currentWorkingDirectory(), true};
         Folder cacheFolder {"teapot", tmp, true};
         for(string file: cacheFolder.list(Files)) remove(file, cacheFolder);
 
@@ -150,8 +150,7 @@ struct Render {
 
             using namespace Tungsten;
             std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
-            uint32 seed = 0xBA5EBA11;
-            _flattenedScene.reset(_scene->makeTraceable(seed));
+            _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
             Tungsten::Integrator& integrator = _flattenedScene->integrator();
             Time renderTime {true};
             integrator.startRender([](){});
@@ -165,53 +164,11 @@ struct Render {
             }
             assert_(renderTime.nanoseconds()*8 > time.nanoseconds()*7, strD(renderTime, time));
             log(time);
-#if 0
-#if 1
-            const half* targetB = B.begin();
-            const half* targetG = G.begin();
-            const half* targetR = R.begin();
-            for(uint i=0; i<size.y*size.x; i+=8) {
-                extern ImageF B, G, R;
-                *(v8hf*)(targetB+i) = toHalf(*(v8sf*)(B.data+i));
-                *(v8hf*)(targetG+i) = toHalf(*(v8sf*)(G.data+i));
-                *(v8hf*)(targetR+i) = toHalf(*(v8sf*)(R.data+i));
-            }
-#else
-            assert_(source.size == size);
-            extern half sRGB_reverse_half[0x100];
-#if 0
-            const uint8* src = (const uint8*)source.data;
-            const half* targetB = B.data;
-            const half* targetG = G.data;
-            const half* targetR = R.data;
-            for(uint i=0; i<size.y*size.x; i+=8) {
-                v32ub v = *(v32ub*)(src+i*4);
-                v8ub b = __builtin_shufflevector(v, v, 0*4+0, 1*4+0, 2*4+0, 3*4+0, 4*4+0, 5*4+0, 6*4+0, 7*4+0);
-                v8ub g = __builtin_shufflevector(v, v, 0*4+1, 1*4+1, 2*4+1, 3*4+1, 4*4+1, 5*4+1, 6*4+1, 7*4+1);
-                v8ub r = __builtin_shufflevector(v, v, 0*4+2, 1*4+2, 2*4+2, 3*4+2, 4*4+2, 5*4+2, 6*4+2, 7*4+2);
-                v16hf B = (v16hf)gather(reinterpret_cast<float*>(sRGB_reverse_half), __builtin_convertvector(b, v8ui));
-                v16hf G = (v16hf)gather(reinterpret_cast<float*>(sRGB_reverse_half), __builtin_convertvector(g, v8ui));
-                v16hf R = (v16hf)gather(reinterpret_cast<float*>(sRGB_reverse_half), __builtin_convertvector(r, v8ui));
-                *(v8hf*)(targetB+i) = __builtin_shufflevector(B, B, 0*2, 1*2, 2*2, 3*2, 4*2, 5*2, 6*2, 7*2);
-                *(v8hf*)(targetG+i) = __builtin_shufflevector(G, G, 0*2, 1*2, 2*2, 3*2, 4*2, 5*2, 6*2, 7*2);
-                *(v8hf*)(targetR+i) = __builtin_shufflevector(R, R, 0*2, 1*2, 2*2, 3*2, 4*2, 5*2, 6*2, 7*2);
-            }
-#else
-            for(uint y: range(size.y)) for(uint x: range(size.x)) {
-                B(x, y) = sRGB_reverse_half[source(x, y).b];
-                G(x, y) = sRGB_reverse_half[source(x, y).g];
-                R(x, y) = sRGB_reverse_half[source(x, y).r];
-            }
-#endif
-#endif
-#endif
-        }//);
+        }
         log("Rendered",strx(uint2(N)),"x",strx(size),"images in", time);
     }
-} prerender;
-#endif
+}; //prerender;
 
-#if 1
 struct ViewControl : virtual Widget {
     vec2 viewYawPitch = vec2(0, 0); // Current view angles
 
@@ -237,31 +194,133 @@ struct ViewControl : virtual Widget {
 };
 
 struct ViewApp {
-    ViewWidget view {uint2(1280,1024), {this, &ViewApp::render}};
+    string name;
+    vec2 min, max;
+    uint2 imageCount;
+    uint2 imageSize;
+    Map map;
+    ref<half> field;
+
+    bool orthographic = false;
+
+    ViewWidget view {uint2(1024,1024), {this, &ViewApp::render}};
     unique<Window> window = nullptr;
-    Image target;
 
     ViewApp() {
+        assert_(arguments());
+        load(arguments()[0]);
         window = ::window(&view);
+        window->setTitle(name);
+        window->actions[Key('o')] = [this]{ orthographic=!orthographic; window->render(); };
+    }
+    void load(string name) {
+        field = {};
+        map = Map();
+        imageCount = 0;
+        imageSize = 0;
+        this->name = name;
+        Folder tmp (name, ::tmp, true);
+
+        for(string name: tmp.list(Files)) {
+            TextData s (name);
+            imageCount.x = s.integer(false);
+            if(!s.match('x')) continue;
+            imageCount.y = s.integer(false);
+            if(!s.match('x')) continue;
+            imageSize.x = s.integer(false);
+            if(!s.match('x')) continue;
+            imageSize.y = s.integer(false);
+            assert_(!s);
+            map = Map(name, tmp);
+            field = cast<half>(map);
+            break;
+        }
+        assert_(imageCount && imageSize);
+
+        if(window) {
+            window->setSize();
+            window->setTitle(name);
+        }
     }
     Image render(uint2 targetSize, vec2 angles) {
+        Image target (targetSize);
+
         const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
-        ::render(targetSize, s, t);
-#if 1
-        extern ImageF B, G, R;
-        if(!target) target = Image(B.size);
-        extern uint8 sRGB_forward[0x1000];
-        for(uint i=0; i<B.ref::size; i++) {
-            const uint b = ::min(0xFFFu, uint(0xFFF*B[i]));
-            const uint g = ::min(0xFFFu, uint(0xFFF*G[i]));
-            const uint r = ::min(0xFFFu, uint(0xFFF*R[i]));
-            target[i] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
-        }
-        return unsafeShare(target);
-#else
-        extern Image image;
-        return unsafeShare(image);
-#endif
+        mat4 M = shearedPerspective(s, t);
+
+        assert_(imageCount.x == imageCount.y);
+
+        parallel_chunk(target.size.y, [this, &target, M](uint, uint start, uint sizeI) {
+            const uint targetStride = target.size.x;
+            const uint size1 = imageSize.x *1;
+            const uint size2 = imageSize.y *size1;
+            const uint size3 = imageCount.x*size2;
+            const uint64 size4 = uint64(imageCount.y)*uint64(size3);
+            const struct Image4DH : ref<half> {
+                uint4 size;
+                Image4DH(uint2 imageCount, uint2 imageSize, ref<half> data) : ref<half>(data), size(imageCount.y, imageCount.x, imageSize.y, imageSize.x) {}
+                const half& operator ()(uint s, uint t, uint u, uint v) const {
+                    assert_(t < size[0] && s < size[1] && v < size[2] && u < size[3], int(s), int(t), int(u), int(v));
+                    size_t index = ((uint64(t)*size[1]+s)*size[2]+v)*size[3]+u;
+                    assert_(index < ref<half>::size, int(index), ref<half>::size, int(s), int(t), int(u), int(v), size);
+                    return operator[](index);
+                }
+            } fieldB {imageCount, imageSize, field.slice(1*size4, size4)},
+              fieldG {imageCount, imageSize, field.slice(2*size4, size4)},
+              fieldR {imageCount, imageSize, field.slice(3*size4, size4)};
+            assert_(imageSize.x%2==0); // Gather 32bit / half
+            const v8ui sample4D = {    0,           size1/2,         size2/2,       (size2+size1)/2,
+                                              size3/2, (size3+size1)/2, (size3+size2)/2, (size3+size2+size1)/2};
+            for(int targetY: range(start, start+sizeI)) for(int targetX: range(target.size.x)) {
+                size_t targetIndex = targetY*targetStride + targetX;
+                const vec3 O = M.inverse() * vec3(2.f*targetX/float(targetStride-1)-1, 2.f*targetY/float(target.size.y-1)-1, -1);
+                const vec3 P = M.inverse() * vec3(2.f*targetX/float(targetStride-1)-1, 2.f*targetY/float(target.size.y-1)-1, +1);
+                const vec3 d = normalize(P-O);
+
+                const vec3 n (0,0,1);
+                const float nd = dot(n, d);
+                const vec3 n_nd = n / nd;
+
+                const vec2 Pst = O.xy() + dot(n_nd, vec3(0,0,1)-O) * d.xy();
+                const vec2 ST = (Pst+vec2(1))/2.f;
+                const vec2 Puv = O.xy() + dot(n_nd, vec3(0,0,0)-O) * d.xy();
+                const vec2 UV = (Puv+vec2(1))/2.f;
+
+                const vec2 st = vec2(0x1p-16) + vec2(1-0x1p-16) * ST * vec2(imageCount-uint2(1));
+                const vec2 uv_uncorrected = vec2(1-0x1p-16) * UV * vec2(imageSize-uint2(1));
+
+                if(st[0] < -0 || st[1] < -0) { target[targetIndex]=byte4(0xFF,0,0,0xFF); continue; }
+                const uint sIndex = uint(st[0]), tIndex = uint(st[1]);
+                if(sIndex >= uint(imageCount.x)-1 || tIndex >= uint(imageCount.y)-1) { target[targetIndex]=byte4(0,0xFF,0xFF,0xFF); continue; }
+
+                bgr3f S = 0;
+                {
+                    const uint uIndex = uint(uv_uncorrected[0]), vIndex = uint(uv_uncorrected[1]);
+                    if(uv_uncorrected[0] < 0 || uv_uncorrected[1] < 0) { target[targetIndex]=byte4(0,0,0xFF,0xFF); continue; }
+                    if(uIndex >= uint(imageSize.x)-1 || vIndex >= uint(imageSize.y)-1) { target[targetIndex]=byte4(0xFF,0xFF,0,0xFF); continue; }
+                    const size_t base = uint64(tIndex)*uint64(size3) + sIndex*size2 + vIndex*size1 + uIndex;
+                    const v16sf B = toFloat(v16hf(gather(reinterpret_cast<const float*>(fieldB.data+base), sample4D)));
+                    const v16sf G = toFloat(v16hf(gather(reinterpret_cast<const float*>(fieldG.data+base), sample4D)));
+                    const v16sf R = toFloat(v16hf(gather(reinterpret_cast<const float*>(fieldR.data+base), sample4D)));
+
+                    const v4sf x = {st[1], st[0], uv_uncorrected[1], uv_uncorrected[0]}; // tsvu
+                    const v8sf X = __builtin_shufflevector(x, x, 0,1,2,3, 0,1,2,3);
+                    static const v8sf _00001111f = {0,0,0,0,1,1,1,1};
+                    const v8sf w_1mw = abs(X - floor(X) - _00001111f); // fract(x), 1-fract(x)
+                    const v16sf w01 = shuffle(w_1mw, w_1mw, 4,4,4,4,4,4,4,4, 0,0,0,0,0,0,0,0)  // ttttttttTTTTTTTT
+                            * shuffle(w_1mw, w_1mw, 5,5,5,5,1,1,1,1, 5,5,5,5,1,1,1,1)  // ssssSSSSssssSSSS
+                            * shuffle(w_1mw, w_1mw, 6,6,2,2,6,6,2,2, 6,6,2,2,6,6,2,2)  // vvVVvvVVvvVVvvVV
+                            * shuffle(w_1mw, w_1mw, 7,3,7,3,7,3,7,3, 7,3,7,3,7,3,7,3); // uUuUuUuUuUuUuUuU
+                    S = bgr3f(dot(w01, B), dot(w01, G), dot(w01, R));
+                }
+                const uint b = ::min(0xFFFu, uint(0xFFF*S.b));
+                const uint g = ::min(0xFFFu, uint(0xFFF*S.g));
+                const uint r = ::min(0xFFFu, uint(0xFFF*S.r));
+                extern uint8 sRGB_forward[0x1000];
+                target[targetIndex] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
+                //target[targetIndex] = byte4(byte3(float(0xFF)*S), 0xFF);
+            }
+        });
+        return target;
     }
 } view;
-#endif
