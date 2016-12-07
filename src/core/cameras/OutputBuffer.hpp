@@ -20,7 +20,8 @@ class OutputBuffer
 {
     Vec2u _res;
 
-    std::unique_ptr<T[]> _bufferA, _bufferB;
+public:    std::unique_ptr<T[]> _bufferA, _bufferB;
+private:
     std::unique_ptr<float[]> _variance;
     std::unique_ptr<uint32[]> _sampleCount;
 

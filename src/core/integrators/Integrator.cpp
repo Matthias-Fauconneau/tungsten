@@ -22,6 +22,7 @@
 #include "interface.h"
 #include "window.h"
 extern Thread mainThread;
+ImageF B, G, R;
 Image image;
 
 namespace Tungsten {
@@ -58,11 +59,23 @@ void Integrator::advanceSpp()
     _nextSpp = min(_currentSpp + _scene->rendererSettings().sppStep(), _scene->rendererSettings().spp());
 }
 
-void Integrator::writeBuffers(const std::string &suffix, bool overwrite)
+void Integrator::writeBuffers(const std::string&, bool)
 {
     Vec2u res = _scene->cam().resolution();
+#if 1
+    if(!B) B = ImageF(res.x(), res.y());
+    if(!G) G = ImageF(res.x(), res.y());
+    if(!R) R = ImageF(res.x(), res.y());
+    assert_(!_scene->cam()._colorBuffer->_bufferB);
+    for(uint32 i: range(B.ref::size)) {
+        Vec3f bgr = _scene->cam()._colorBuffer->_bufferA[i];
+        B[i] = bgr[2];
+        G[i] = bgr[1];
+        R[i] = bgr[0];
+    }
+#endif
+#if 1
     std::unique_ptr<Vec3f[]> hdr(new Vec3f[res.product()]);
-    //std::unique_ptr<Vec3c[]> ldr(new Vec3c[res.product()]);
 
     for (uint32 y = 0; y < res.y(); ++y)
         for (uint32 x = 0; x < res.x(); ++x)
@@ -73,18 +86,7 @@ void Integrator::writeBuffers(const std::string &suffix, bool overwrite)
         Vec3c v(clamp(Vec3i(_scene->cam().tonemap(hdr[i])*255.0f), Vec3i(0), Vec3i(255)));
         image[i] = byte4(v[2], v[1], v[0], 0xFF);
     }
-
-    /*const RendererSettings &settings = _scene->rendererSettings();
-
-    if (!settings.outputFile().empty())
-        ImageIO::saveLdr(incrementalFilename(settings.outputFile(), suffix, overwrite),
-                &ldr[0].x(), res.x(), res.y(), 3);
-    if (!settings.hdrOutputFile().empty())
-        ImageIO::saveHdr(incrementalFilename(settings.hdrOutputFile(), suffix, overwrite),
-                &hdr[0].x(), res.x(), res.y(), 3);
-
-    if (suffix.empty() && !settings.renderOutputs().empty())
-        _scene->cam().saveOutputBuffers();*/
+#endif
 }
 
 void Integrator::saveOutputs()

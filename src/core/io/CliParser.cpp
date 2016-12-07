@@ -111,67 +111,6 @@ void CliParser::addOption(char shortOpt, const std::string &longOpt,
     });
 }
 
-void CliParser::parse(int nativeArgc, const char *nativeArgv[])
-{
-    std::vector<std::string> argv = retrieveUtf8Args(nativeArgc, nativeArgv);
-    int argc = int(argv.size());
-
-    bool operandsOnly = false;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg(argv[i]);
-
-        if (arg == "--") {
-            operandsOnly = true;
-            continue;
-        }
-
-        if (!operandsOnly && arg.size() > 1 && arg.front() == '-') {
-            std::string param;
-            std::string::size_type idx = arg.find_first_of('=');
-            if (idx != std::string::npos) {
-                param = arg.substr(idx + 1);
-                arg.erase(idx);
-            }
-
-            if (arg[1] == '-') {
-                std::string longOpt = arg.substr(2);
-                auto iter = _longOpts.find(longOpt);
-                if (iter == _longOpts.end())
-                    fail("Unrecognized command line option %s", arg);
-
-                CliOption &opt = _options[iter->second];
-
-                if (opt.isPresent)
-                    fail("Duplicate command line option %s", arg);
-                if (opt.hasParam && param.empty() && i == argc - 1)
-                    fail("Missing parameter for command line option %s", arg);
-
-                if (opt.hasParam)
-                    opt.param = param.empty() ? argv[++i] : param;
-                opt.isPresent = true;
-            } else {
-                for (std::string::size_type j = 1; j < arg.size(); ++j) {
-                    auto iter = _shortOpts.find(arg[j]);
-                    if (iter == _shortOpts.end())
-                        fail("Unrecognized command line option %s", arg);
-
-                    CliOption &opt = _options[iter->second];
-                    if (opt.isPresent)
-                        fail("Duplicate command line option %s", arg);
-                    if (opt.hasParam && ((param.empty() && i == argc - 1) || arg.size() > 2))
-                        fail("Missing parameter for command line option %s", arg);
-
-                    if (opt.hasParam)
-                        opt.param = param.empty() ? argv[++i] : param;
-                    opt.isPresent = true;
-                }
-            }
-        } else {
-            _operands.push_back(arg);
-        }
-    }
-}
-
 bool CliParser::isPresent(int token) const
 {
     auto iter = _tokenToOption.find(token);

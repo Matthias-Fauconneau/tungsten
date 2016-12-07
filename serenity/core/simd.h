@@ -128,11 +128,11 @@ static const unused v8si selectMask {1<<0, 1<<1, 1<<2, 1<<3, 1<<4, 1<<5, 1<<6, 1
 inline v8si mask(const mask8 mask) { return (intX(mask) & selectMask) != _0i; }
 inline v16si mask(const mask16 m) { return {mask(mask8(m)), mask(mask8(m>>8))}; }
 
-inline v8sf and(v8si k, v8sf x) { return (v8sf)(k & (v8si)x); }
-inline v8sf xor(v8si k, v8sf x) { return (v8sf)(k ^ (v8si)x); }
+//inline v8sf and(v8si k, v8sf x) { return (v8sf)(k & (v8si)x); }
+//inline v8sf xor(v8si k, v8sf x) { return (v8sf)(k ^ (v8si)x); }
 inline v16si operator &(v16si a, v16si b) { return {a.r1 & b.r1, a.r2 & b.r2}; }
 //inline v16sf operator &(v16sf a, v16si b) { return v16sf(and(a.r1, b.r1), and(a.r2,b.r2)); }
-inline v16sf and(v16si k, v16sf x) { return v16sf(and(k.r1, x.r1), and(k.r2,x.r2)); }
+//inline v16sf and(v16si k, v16sf x) { return v16sf(and(k.r1, x.r1), and(k.r2,x.r2)); }
 
 inline v8si blend(v8si A, v8si B, v8si mask) { return __builtin_ia32_blendvps256(A, B, mask); }
 inline v8ui blend(v8ui A, v8ui B, v8si mask) { return __builtin_ia32_blendvps256(A, B, mask); }
@@ -182,7 +182,7 @@ inline float dot(v16sf a, v16sf b) { return dot(a.r1, b.r1) + dot(a.r2, b.r2); }
 
 template<Type T, uint N> struct Vec { T _[N]; };
 
-#include "math.h"
+/*#include "math.h"
 static inline Vec<v8sf, 2> cossin(const v8sf angle) {
   const v8sf absAngle = abs(angle);
   const v8si octant = (cvtt((4/PI) * absAngle)+1) & (~1);
@@ -196,7 +196,7 @@ static inline Vec<v8sf, 2> cossin(const v8sf angle) {
   const v8sf y2 = (((float8(-1.9515295891E-4) * x2 + float8(8.3321608736E-3)) * x2 + float8(-1.6666654611E-1)) * x2 + 1) * x; // -PI/4 <= x <= 0
   const v8si select = (octant&2) == 0;
   return {{xor(cosSign, blend(y1, y2, ~select)), xor(sinSign, blend(y1, y2, select))}};
-}
+}*/
 
 template<> inline String str(const half& v) { return str(float(v)); }
 template<> inline String str(const v8sf& v) { return "v8sf("_+str(ref<float>((float*)&v,8))+")"_; }

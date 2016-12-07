@@ -93,7 +93,7 @@ struct RendererStatus
     }
 };
 
-class StandaloneRenderer
+struct StandaloneRenderer
 {
     CliParser &_parser;
     std::ostream &_logStream;
@@ -193,7 +193,7 @@ public:
             _status.queuedScenes.pop_front();
         }
 
-        writeLogLine(tfm::format("Loading scene '%s'...", currentScene));
+        //writeLogLine(tfm::format("Loading scene '%s'...", currentScene));
         try {
             std::unique_lock<std::mutex> lock(_sceneMutex);
             _scene.reset(Scene::load(Path(currentScene)));
@@ -261,42 +261,19 @@ public:
                 }
             }
 
-            writeLogLine("Starting render...");
-            Timer timer, checkpointTimer;
-            double totalElapsed = 0.0;
-            while (!integrator.done()) {
-                {
-                    std::unique_lock<std::mutex> lock(_statusMutex);
-                    _status.state = STATE_RENDERING;
-                    _status.currentSpp = integrator.currentSpp();
-                    _status.nextSpp = integrator.nextSpp();
-                }
-
-                integrator.startRender([](){});
-                integrator.waitForCompletion();
-                writeLogLine(tfm::format("Completed %d/%d spp", integrator.currentSpp(), maxSpp));
-                timer.stop();
-                if (_timeout > 0.0 && timer.elapsed() > _timeout)
-                    break;
-                checkpointTimer.stop();
-                if (_checkpointInterval > 0.0 && checkpointTimer.elapsed() > _checkpointInterval) {
-                    totalElapsed += checkpointTimer.elapsed();
-                    writeLogLine(tfm::format("Saving checkpoint after %s",
-                            StringUtils::durationToString(totalElapsed)));
-                    Timer ioTimer;
-                    checkpointTimer.start();
-                    integrator.saveCheckpoint();
-                    if (_scene->rendererSettings().enableResumeRender())
-                        integrator.saveRenderResumeData(*_scene);
-                    ioTimer.stop();
-                    writeLogLine(tfm::format("Saving checkpoint took %s",
-                            StringUtils::durationToString(ioTimer.elapsed())));
-                }
+            //writeLogLine("Starting render...");
+            Timer timer;
+            {
+                std::unique_lock<std::mutex> lock(_statusMutex);
+                _status.state = STATE_RENDERING;
+                _status.currentSpp = integrator.currentSpp();
+                _status.nextSpp = integrator.nextSpp();
             }
+            integrator.startRender([](){});
+            integrator.waitForCompletion();
             timer.stop();
 
-            writeLogLine(tfm::format("Finished render. Render time %s",
-                    StringUtils::durationToString(timer.elapsed())));
+            writeLogLine(tfm::format("%s", StringUtils::durationToString(timer.elapsed())));
 
             integrator.saveOutputs();
             if (_scene->rendererSettings().enableResumeRender())
@@ -311,11 +288,11 @@ public:
                     currentScene, e.what()));
         }
 
-        {
+        /*{
             std::unique_lock<std::mutex> lock(_sceneMutex);
             _flattenedScene.reset();
             _scene.reset();
-        }
+        }*/
 
         return true;
     }

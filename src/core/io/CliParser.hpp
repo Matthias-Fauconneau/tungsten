@@ -29,7 +29,9 @@ class CliParser
     std::unordered_map<char, int> _shortOpts;
     std::unordered_map<std::string, int> _longOpts;
 
+public:
     std::vector<std::string> _operands;
+private:
 
     void wrapString(int width, int padding, const std::string &src) const;
 
