@@ -58,11 +58,9 @@ const vec3 Vec3(ref<Variant> v) { return vec3((float)v[0],(float)v[1],(float)v[2
 const mat4 transform(const Dict& object) {
     const Dict& t = object.at("transform");
     mat4 transform;
-#if 1
     const vec3 look_at = Vec3(t.at("look_at"));
     const vec3 position = Vec3(t.at("position"));
     const vec3 z = normalize(look_at - position);
-    //log(str(length(look_at - position)));
     vec3 y = Vec3(t.at("up"));
     y = normalize(y - dot(y,z)*z); // Projects up on plane orthogonal to z
     const vec3 x = cross(y, z);
@@ -70,23 +68,6 @@ const mat4 transform(const Dict& object) {
     transform[1] = vec4(y, 0);
     transform[2] = vec4(z, 0);
     transform[3] = vec4(-(position+16.f*z), 1);
-#else
-    if(t.contains("position")) {
-        ref<Variant> position = t.at("position");
-        transform.translate(vec3((float)position[0],(float)position[1],(float)position[2]));
-    }
-    if(t.contains("scale")) {
-        ref<Variant> scale = t.at("scale");
-        transform.scale(vec3((float)scale[0], (float)scale[1], (float)scale[2]));
-    }
-    if(t.contains("rotation")) {
-        ref<Variant> rotation = t.at("rotation");
-        transform.rotateX(rotation[0]*PI/180);
-        transform.rotateY(rotation[1]*PI/180);
-        transform.rotateZ(rotation[2]*PI/180);
-    }
-    error(t);
-#endif
     return transform;
 }
 
@@ -95,18 +76,6 @@ mat4 parseCamera(ref<byte> file) {
     Variant root = parseJSON(s);
     const Dict& camera = root.dict.at("camera");
     mat4 modelView = ::transform( camera ).inverse();
-    //const float fov = float(camera.at("fov"))*PI/180;
-    //const float S = 1/(tan(fov/2));
-    //const vec2 resolution = Vec2(camera.at("resolution"));
-    /*mat4 M; // perspective
-    M(0,0) = S;
-    M(1,1) = S*resolution.y/resolution.x;
-    const float near = 0.01, far = 100; // FIXME
-    M(2,2) = -far/(far-near);
-    M(2,3) = -1;
-    M(3,2) = -(far*near)/(far-near);
-    M(3,3) = 0;
-    return M * modelView;*/
     modelView.rotateZ(PI); // -Z (FIXME)
     modelView = mat4().rotateZ(PI) * modelView;
     return modelView;
@@ -132,11 +101,6 @@ static mat4 shearedPerspective(const float s, const float t) { // Sheared perspe
 }
 
 Image render(uint2 targetSize, float s, float t) {
-    /*mat4 transform;
-    transform.translate(vec3(23.1701, 16.7142, -0.172476)); // 23.1701, t+16.7142, s+-0.172476
-    //transform.rotateX(-PI/5);
-    transform.rotateX(PI);*/
-    //transform.rotateY(PI/2);
     mat4 camera = parseCamera(readFile(arguments()[0]));
 
     // Sheared perspective (rectification)
