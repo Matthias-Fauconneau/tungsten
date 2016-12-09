@@ -22,7 +22,7 @@
 
 namespace Tungsten {
 
-class TraceableScene
+struct TraceableScene
 {
     struct IntersectionRay : RTCRay
     {

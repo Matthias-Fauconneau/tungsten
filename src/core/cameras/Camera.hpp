@@ -41,16 +41,13 @@ struct Camera : public JsonSerializable
 
     Tonemap::Type _tonemapOp;
 
-protected:
     Mat4f _transform;
     Mat4f _invTransform;
     Vec3f _pos;
     Vec3f _lookAt;
     Vec3f _up;
 
-public:
     Vec2u _res;
-protected:
     float _ratio;
     Vec2f _pixelSize;
 

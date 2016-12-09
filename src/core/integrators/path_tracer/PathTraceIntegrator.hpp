@@ -22,7 +22,7 @@
 
 namespace Tungsten {
 
-class PathTraceIntegrator : public Integrator
+struct PathTraceIntegrator : public Integrator
 {
     static CONSTEXPR uint32 TileSize = 16;
     static CONSTEXPR uint32 VarianceTileSize = 4;

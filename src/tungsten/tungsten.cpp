@@ -1,4 +1,7 @@
 #include "Shared.hpp"
+#include "core/integrators/path_tracer/PathTraceIntegrator.hpp"
+#include "core/sampling/SobolPathSampler.hpp"
+#include "core/thread/ThreadPool.hpp"
 #define Type typename
 #include "matrix.h"
 #include "interface.h"
@@ -7,6 +10,7 @@
 #include "variant.h"
 #include "simd.h"
 #include "parallel.h"
+#include "mwc.h"
 
 inline Variant parseJSON(TextData& s) {
     s.whileAny(" \t\n\r"_);
@@ -224,12 +228,18 @@ struct ViewApp {
     unique<Window> window = nullptr;
 
     std::unique_ptr<Tungsten::Scene> _scene;
+    std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
+
+    Random random;
 
     ViewApp() {
         Tungsten::EmbreeUtil::initDevice();
         Tungsten::ThreadUtils::startThreads(8);
         _scene.reset(Tungsten::Scene::load(Tungsten::Path("scene.json")));
         _scene->loadResources();
+        _scene->camera()->_res.x() = view.size.x;
+        _scene->camera()->_res.y() = view.size.y;
+        _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
 
         assert_(arguments());
         load(arguments()[0]);
@@ -269,25 +279,94 @@ struct ViewApp {
     Image render(uint2 targetSize, vec2 angles) {
         Image target (targetSize);
 
-#if 0
+#if 1
         const mat4 camera = parseCamera(readFile("scene.json"));
         const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
         const mat4 M = shearedPerspective(s, t) * camera;
         _scene->camera()->M = M;
-        _scene->camera()->_res.x() = targetSize.x;
-        _scene->camera()->_res.y() = targetSize.y;
-        std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
+        _scene->camera()->_res.x() = view.size.x;
+        _scene->camera()->_res.y() = view.size.y;
         _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
-        Tungsten::Integrator& integrator = _flattenedScene->integrator();
-        integrator.startRender([](){});
-        integrator.waitForCompletion();
+        _flattenedScene->_cam.M = M;
+        _flattenedScene->_cam._res.x() = targetSize.x;
+        _flattenedScene->_cam._res.y() = targetSize.y;
         extern uint8 sRGB_forward[0x1000];
-        for(uint i=0; i<target.ref::size; i++) {
-            Tungsten::Vec3f rgb = _scene->camera()->_colorBuffer->_bufferA[i];
-            const uint r = ::min(0xFFFu, uint(0xFFF*rgb[0]));
-            const uint g = ::min(0xFFFu, uint(0xFFF*rgb[1]));
-            const uint b = ::min(0xFFFu, uint(0xFFF*rgb[2]));
-            target[i] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
+        Tungsten::SobolPathSampler sampler(random.next()[0]);
+        for(uint y: range(target.size.y)) for(uint x: range(target.size.x)) {
+            uint pixelIndex = y*target.size.x + x;
+            sampler.startPath(pixelIndex, 0);
+            //Tungsten::Vec3f rgb = integrator._tracers[0]->traceSample(pixel, *tile.sampler);
+            const vec3 O = M.inverse() * vec3(2.f*x/float(targetSize.x-1)-1, -(2.f*y/float(targetSize.y-1)-1), -1);
+            Tungsten::PositionSample position;
+            position.p.x() = O.x;
+            position.p.y() = O.y;
+            position.p.z() = O.z;
+            using namespace Tungsten;
+            position.weight = Vec3f(1.0f);
+            position.pdf = 1.0f;
+            position.Ng = _flattenedScene->_cam._transform.fwd();
+            Tungsten::DirectionSample direction;
+            const vec3 P = M.inverse() * vec3(2.f*x/float(targetSize.x-1)-1, -(2.f*y/float(targetSize.y-1)-1), +1);
+            const vec3 d = normalize(P-O);
+            direction.d.x() = d.x;
+            direction.d.y() = d.y;
+            direction.d.z() = d.z;
+            direction.weight = Vec3f(1.0f);
+            direction.pdf = 1;
+
+            //Vec3f throughput (1);
+            Ray ray(position.p, direction.d);
+            ray.setPrimaryRay(true);
+
+            /*MediumSample mediumSample;
+            SurfaceScatterEvent surfaceEvent;
+            Medium::MediumState state;
+            state.reset();*/
+            IntersectionTemporary data;
+            IntersectionInfo info;
+            /*Vec3f emission(0.0f);
+
+            float hitDistance = 0.0f;
+            const Medium *medium = _flattenedScene->cam().medium().get();
+            int bounce = 0;*/
+            /*const bool didHit =*/ _flattenedScene->intersect(ray, data, info);
+            /*bool wasSpecular = true;
+                    while ((didHit || medium) && bounce < 64) {
+                        bool hitSurface = true;
+
+                        if (hitSurface) {
+                            if(bounce == 0) hitDistance = ray.farT();
+
+                            surfaceEvent = integrator._tracers[0]->makeLocalScatterEvent(data, info, ray, tile.sampler.get());
+                            Vec3f transmittance(-1.0f);
+                            if(!integrator._tracers[0]->handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance))
+                                break;
+                        } else {
+                            if (!integrator._tracers[0]->handleVolume(*tile.sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
+                                break;
+                        }
+
+                        if (throughput.max() == 0.0f)
+                            break;
+
+                        float roulettePdf = std::abs(throughput).max();
+                        if (bounce > 2 && roulettePdf < 0.1f) {
+                            if (tile.sampler->nextBoolean(roulettePdf))
+                                throughput /= roulettePdf;
+                            else
+                                break;
+                        }
+
+                        bounce++;
+                        if (bounce < 64) didHit = _flattenedScene->intersect(ray, data, info);
+                    }*/
+            /*emission[0] = d.x;
+            emission[1] = d.y;
+            emission[2] = d.z;
+            const uint r = ::min(0xFFFu, uint(0xFFF*emission[0]));
+            const uint g = ::min(0xFFFu, uint(0xFFF*emission[1]));
+            const uint b = ::min(0xFFFu, uint(0xFFF*emission[2]));
+            target[pixelIndex] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);*/
         }
         return unsafeShare(target);
 #else
@@ -317,11 +396,11 @@ struct ViewApp {
                     return operator[](index);
                 }
             } fieldB {imageCount, imageSize, field.slice(1*size4, size4)},
-              fieldG {imageCount, imageSize, field.slice(2*size4, size4)},
-              fieldR {imageCount, imageSize, field.slice(3*size4, size4)};
+                     fieldG {imageCount, imageSize, field.slice(2*size4, size4)},
+                            fieldR {imageCount, imageSize, field.slice(3*size4, size4)};
             assert_(imageSize.x%2==0); // Gather 32bit / half
             const v8ui sample4D = {    0,           size1/2,         size2/2,       (size2+size1)/2,
-                                              size3/2, (size3+size1)/2, (size3+size2)/2, (size3+size2+size1)/2};
+                                       size3/2, (size3+size1)/2, (size3+size2)/2, (size3+size2+size1)/2};
             for(int targetY: range(start, start+sizeI)) for(int targetX: range(target.size.x)) {
                 size_t targetIndex = targetY*targetStride + targetX;
                 const vec3 O = M.inverse() * vec3(2.f*targetX/float(targetStride-1)-1, 2.f*targetY/float(target.size.y-1)-1, -1);

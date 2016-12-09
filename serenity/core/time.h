@@ -98,24 +98,6 @@ String str(Date date, const string format="dddd, dd MMMM yyyy hh:mm:ss");
 Date parseDate(TextData& s);
 inline Date parseDate(string s) { TextData t(s); Date date = parseDate(t); return t ? Date() : date; }
 
-#if 0
-/// Generates a sequence of uniformly distributed pseudo-random 64bit integers
-struct Random {
-    uint sz,sw;
-    uint z,w;
-    Random(uint sz=1, uint sw=1) : sz(sz), sw(sw) { reset(); }
-    void seed() { z=sz=readCycleCounter(); w=sw=readCycleCounter(); }
-    void reset() { z=sz; w=sw; }
-    uint64 next() {
-     z = 36969 * (z & 0xFFFF) + (z >> 16);
-     w = 18000 * (w & 0xFFFF) + (w >> 16);
-     return (z << 16) + w;
-    }
-    operator uint64() { return next(); }
-    float operator()() { float f = float(next()&((1<<24)-1))*0x1p-24f; assert(f>=0 && f<1); return f; }
-};
-#endif
-
 #include "thread.h"
 struct Timer : Stream, Poll {
  Timer(const function<void()>& timeout={}, long sec=0, Thread& thread=mainThread);

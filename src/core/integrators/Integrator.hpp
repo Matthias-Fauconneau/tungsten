@@ -13,7 +13,7 @@ namespace Tungsten {
 class TraceableScene;
 class Scene;
 
-class Integrator : public JsonSerializable
+struct Integrator : public JsonSerializable
 {
 protected:
     const TraceableScene *_scene;
