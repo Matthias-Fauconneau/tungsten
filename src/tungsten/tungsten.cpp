@@ -68,7 +68,6 @@ const mat4 transform(const Dict& object) {
     transform[0] = vec4(x, 0);
     transform[1] = vec4(y, 0);
     transform[2] = vec4(z, 0);
-    transform[3] = vec4(-(position+16.f*z), 1);
     return transform;
 }
 
@@ -77,6 +76,7 @@ mat4 parseCamera(ref<byte> file) {
     Variant root = parseJSON(s);
     const Dict& camera = root.dict.at("camera");
     mat4 modelView = ::transform( camera ).inverse();
+    modelView = /*mat4().translate(vec3(0,0,-1./2)) **/ mat4().scale(1./16) * modelView;
     modelView.rotateZ(PI); // -Z (FIXME)
     modelView = mat4().rotateZ(PI) * modelView;
     return modelView;
@@ -91,13 +91,12 @@ static mat4 shearedPerspective(const float s, const float t) { // Sheared perspe
     M(1,1) = 2 / (top-bottom);
     M(0,2) = (right+left) / (right-left);
     M(1,2) = (top+bottom) / (top-bottom);
-    const float near = 1, far = 16;
+    const float near = 1-1./2, far = 1+1./2;
     M(2,2) = - (far+near) / (far-near);
     M(2,3) = - 2*far*near / (far-near);
     M(3,2) = - 1;
     M(3,3) = 0;
-    M.translate(vec3(-10*S,-10*T,0));
-    //M.translate(vec3(-S,-T,0));
+    M.translate(vec3(-S,-T,0));
     M.translate(vec3(0,0,-1)); // 0 -> -1 (Z-)
     return M;
 }
@@ -109,8 +108,8 @@ struct Render {
         Folder cacheFolder {"teapot", tmp, true};
         for(string file: cacheFolder.list(Files)) remove(file, cacheFolder);
 
-        const int N = 5;
-        uint2 size (1024, 1024);
+        const int N = 17;
+        uint2 size (512);
 
         File file(str(N)+'x'+str(N)+'x'+strx(size), cacheFolder, Flags(ReadWrite|Create));
         size_t byteSize = 4ull*N*N*size.y*size.x*sizeof(half);
@@ -129,7 +128,8 @@ struct Render {
         _scene.reset(Tungsten::Scene::load(Tungsten::Path("scene.json")));
         _scene->loadResources();
         _scene->rendererSettings().setSpp(1);
-
+        _scene->camera()->_res.x() = size.x;
+        _scene->camera()->_res.y() = size.y;
         Time time (true); Time lastReport (true);
         //parallel_for(0, N*N, [&](uint unused threadID, size_t stIndex) {
         for(int stIndex: range(N*N)) {
@@ -147,27 +147,44 @@ struct Render {
             const float s = sIndex/float(N-1), t = tIndex/float(N-1);
             //::render(size, , B, G, R);
             _scene->camera()->M = shearedPerspective(s, t) * camera;
-
-            using namespace Tungsten;
+            Time setupTime {true};
             std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
             _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
             Tungsten::Integrator& integrator = _flattenedScene->integrator();
+            setupTime.stop();
             Time renderTime {true};
             integrator.startRender([](){});
             integrator.waitForCompletion();
-            Tungsten::Vec2u res = _scene->camera()->resolution();
-            for(uint32 i: range(B.ref::size)) { // FIXME: SIMD
-                Tungsten::Vec3f rgb = _scene->camera()->_colorBuffer->_bufferA[i];
-                R[i] = rgb[0];
-                G[i] = rgb[1];
-                B[i] = rgb[2];
+            renderTime.stop();
+            const float* RGB = (float*)_scene->camera()->_colorBuffer->_bufferA.get();
+            const half* targetB = B.begin();
+            const half* targetG = G.begin();
+            const half* targetR = R.begin();
+            for(uint i=0; i<size.y*size.x; i+=2*8) {
+                v8sf v0 = *(v8sf*)(RGB+i*3+0*8); // R G B R G B R G
+                v8sf v1 = *(v8sf*)(RGB+i*3+1*8); // B R G B R G B R
+                v8sf v2 = *(v8sf*)(RGB+i*3+2*8); // G B R G B R G B
+                v8sf v3 = *(v8sf*)(RGB+i*3+3*8); // R G B R G B R G
+                v8sf v4 = *(v8sf*)(RGB+i*3+4*8); // B R G B R G B R
+                v8sf v5 = *(v8sf*)(RGB+i*3+5*8); // G B R G B R G B
+                v16hf v01 = toHalf(v16sf(v0,v1));
+                v16hf v23 = toHalf(v16sf(v2,v3));
+                v16hf v45 = toHalf(v16sf(v4,v5));
+                *(v16hf*)(targetR+i) = __builtin_shufflevector(__builtin_shufflevector(v01, v23, 0,3,6, 9, 12,15,18,21, 24,27,-1,-1, -1,-1,-1,-1), v45, 0,1,2,3, 4,5,6,7, 8,9,14,17, 20,23,26,29);
+                *(v16hf*)(targetG+i) = __builtin_shufflevector(__builtin_shufflevector(v01, v23, 1,4,7,10, 13,16,19,22, 25,28,-1,-1, -1,-1,-1,-1), v45, 0,1,2,3, 4,5,6,7, 8,9,15,18, 21,24,27,30);
+                *(v16hf*)(targetB+i) = __builtin_shufflevector(__builtin_shufflevector(v01, v23, 2,5,8,11, 14,17,20,23, 26,29,-1,-1, -1,-1,-1,-1), v45, 0,1,2,3, 4,5,6,7, 8,9,16,19, 22,25,28,31);
             }
-            assert_(renderTime.nanoseconds()*8 > time.nanoseconds()*7, strD(renderTime, time));
-            log(time);
+            assert_(renderTime.nanoseconds() > time.nanoseconds()*2/3, strD(renderTime, time), strD(setupTime, time));
+            log(strD(renderTime, time), strD(setupTime, time));
         }
         log("Rendered",strx(uint2(N)),"x",strx(size),"images in", time);
     }
-}; //prerender;
+}
+#if 1
+;
+#else
+prerender;
+#endif
 
 struct ViewControl : virtual Widget {
     vec2 viewYawPitch = vec2(0, 0); // Current view angles
@@ -201,9 +218,9 @@ struct ViewApp {
     Map map;
     ref<half> field;
 
-    bool orthographic = false;
+    bool orthographic = true;
 
-    ViewWidget view {uint2(1024,1024), {this, &ViewApp::render}};
+    ViewWidget view {uint2(512), {this, &ViewApp::render}};
     unique<Window> window = nullptr;
 
     std::unique_ptr<Tungsten::Scene> _scene;
@@ -213,7 +230,6 @@ struct ViewApp {
         Tungsten::ThreadUtils::startThreads(8);
         _scene.reset(Tungsten::Scene::load(Tungsten::Path("scene.json")));
         _scene->loadResources();
-        _scene->rendererSettings().setSpp(1);
 
         assert_(arguments());
         load(arguments()[0]);
@@ -253,13 +269,13 @@ struct ViewApp {
     Image render(uint2 targetSize, vec2 angles) {
         Image target (targetSize);
 
+#if 0
+        const mat4 camera = parseCamera(readFile("scene.json"));
         const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
-        mat4 camera = parseCamera(readFile("scene.json"));
-        _scene->camera()->M = shearedPerspective(s, t) * camera;
-
-        assert_(imageCount.x == imageCount.y);
-#if 1
-        using namespace Tungsten;
+        const mat4 M = shearedPerspective(s, t) * camera;
+        _scene->camera()->M = M;
+        _scene->camera()->_res.x() = targetSize.x;
+        _scene->camera()->_res.y() = targetSize.y;
         std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
         _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
         Tungsten::Integrator& integrator = _flattenedScene->integrator();
@@ -275,6 +291,16 @@ struct ViewApp {
         }
         return unsafeShare(target);
 #else
+        mat4 M;
+        if(orthographic) {
+            M.rotateX(angles.y); // Pitch
+            M.rotateY(angles.x); // Yaw
+            M.scale(vec3(1,1,-1)); // Z-
+        } else {
+            const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
+            M = shearedPerspective(s, t);
+        }
+        assert_(imageCount.x == imageCount.y);
         parallel_chunk(target.size.y, [this, &target, M](uint, uint start, uint sizeI) {
             const uint targetStride = target.size.x;
             const uint size1 = imageSize.x *1;

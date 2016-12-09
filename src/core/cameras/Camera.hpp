@@ -48,7 +48,9 @@ protected:
     Vec3f _lookAt;
     Vec3f _up;
 
+public:
     Vec2u _res;
+protected:
     float _ratio;
     Vec2f _pixelSize;
 
