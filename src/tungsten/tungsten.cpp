@@ -131,14 +131,14 @@ struct Render {
         Tungsten::ThreadUtils::startThreads(8);
         std::unique_ptr<Tungsten::Scene> scene;
         scene.reset(Tungsten::Scene::load(Tungsten::Path("scene.json")));
-        scene->loadResources();
-        scene->rendererSettings().setSpp(1);
-        scene->camera()->_res.x() = size.x;
-        scene->camera()->_res.y() = size.y;
+        scene.loadResources();
+        scene.rendererSettings().setSpp(1);
+        scene.camera()->_res.x() = size.x;
+        scene.camera()->_res.y() = size.y;
         std::unique_ptr<Tungsten::TraceableScene> flattenedScene;
-        flattenedScene.reset(scene->makeTraceable(readCycleCounter()));
-        flattenedScene->_cam._res.x() = size.x;
-        flattenedScene->_cam._res.y() = size.y;
+        flattenedScene.reset(scene.makeTraceable(readCycleCounter()));
+        flattenedScene._cam._res.x() = size.x;
+        flattenedScene._cam._res.y() = size.y;
         Time time (true); Time lastReport (true);
         //parallel_for(0, N*N, [&](uint unused threadID, size_t stIndex) {
         for(int stIndex: range(N*N)) {
@@ -148,7 +148,7 @@ struct Render {
             // Sheared perspective (rectification)
             const float s = sIndex/float(N-1), t = tIndex/float(N-1);
             const mat4 M = shearedPerspective(s, t) * camera;
-            flattenedScene->_cam.M = M;
+            flattenedScene._cam.M = M;
             parallel_chunk(size.y, [&flattenedScene, M, size, tIndex, sIndex, field](uint, uint start, uint sizeI) {
                 //ImageH Z (unsafeRef(field.slice(((0ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
                 ImageH B (unsafeRef(field.slice(((1ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
@@ -170,7 +170,7 @@ struct Render {
                     using namespace Tungsten;
                     position.weight = Vec3f(1.0f);
                     position.pdf = 1.0f;
-                    position.Ng = flattenedScene->_cam._transform.fwd();
+                    position.Ng = flattenedScene._cam._transform.fwd();
                     Tungsten::DirectionSample direction;
                     const vec3 P = M.inverse() * vec3(2.f*x/float(size.x-1)-1, -(2.f*y/float(size.y-1)-1), +1);
                     const vec3 d = normalize(P-O);
@@ -191,11 +191,11 @@ struct Render {
                     state.reset();
                     IntersectionInfo info;
                     Vec3f emission(0.0f);
-                    const Medium *medium = flattenedScene->cam().medium().get();
+                    const Medium *medium = flattenedScene.cam().medium().get();
 
                     float hitDistance = 0.0f;
                     int bounce = 0;
-                    bool didHit = flattenedScene->intersect(ray, data, info);
+                    bool didHit = flattenedScene.intersect(ray, data, info);
                     bool wasSpecular = true;
                     while ((didHit || medium) && bounce < maxBounces) {
                         bool hitSurface = true;
@@ -235,7 +235,7 @@ struct Render {
 
                         bounce++;
                         if (bounce < maxBounces)
-                            didHit = flattenedScene->intersect(ray, data, info);
+                            didHit = flattenedScene.intersect(ray, data, info);
                     }
                     if (bounce < maxBounces)
                         tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
@@ -290,25 +290,21 @@ struct ViewApp {
     ViewWidget view {uint2(512), {this, &ViewApp::render}};
     unique<Window> window = nullptr;
 
-    std::unique_ptr<Tungsten::Scene> scene;
-    std::unique_ptr<Tungsten::TraceableScene> flattenedScene;
+    struct Scene : Tungsten::Scene {
+        Scene() : Tungsten::Scene(Path(), std::make_shared<TextureCache>()) {
+            Tungsten::EmbreeUtil::initDevice();
+            std::string json = FileUtils::loadText(_path = Path("scene.json"));
+            rapidjson::Document document;
+            document.Parse<0>(json.c_str());
+            fromJson(document, *this);
+            loadResources();
+        }
+    } scene;
+    Tungsten::TraceableScene flattenedScene {*scene._camera, *scene._integrator, scene._primitives, scene._bsdfs, scene._media, scene._rendererSettings, (uint32)readCycleCounter()};
 
     Random random;
 
     ViewApp() {
-        Tungsten::EmbreeUtil::initDevice();
-        Tungsten::Path path("scene.json");
-        //scene.reset(Tungsten::Scene::load(path));
-        std::string json = FileUtils::loadText(path);
-        rapidjson::Document document;
-        document.Parse<0>(json.c_str());
-        scene.reset(new Scene(path.parent(), std::make_shared<TextureCache>()));
-        scene->fromJson(document, *scene);
-        scene->setPath(path);
-
-        scene->loadResources();
-        flattenedScene.reset(scene->makeTraceable(readCycleCounter()));
-
         assert_(arguments());
         load(arguments()[0]);
         window = ::window(&view);
@@ -354,7 +350,7 @@ struct ViewApp {
         extern uint8 sRGB_forward[0x1000];
         parallel_chunk(target.size.y, [this, &target, M](uint _threadId, uint start, uint sizeI) {
             Tungsten::SobolPathSampler sampler(readCycleCounter());
-            Tungsten::TraceBase tracer(flattenedScene.get(), Tungsten::TraceSettings(), 0);
+            Tungsten::TraceBase tracer(&flattenedScene, Tungsten::TraceSettings(), 0);
             for(int y: range(start, start+sizeI)) for(uint x: range(target.size.x)) {
                 uint pixelIndex = y*target.size.x + x;
                 sampler.startPath(pixelIndex, 0);
@@ -365,7 +361,7 @@ struct ViewApp {
                 position.p.z() = O.z;
                 position.weight = Vec3f(1.0f);
                 position.pdf = 1.0f;
-                position.Ng = flattenedScene->_cam._transform.fwd();
+                position.Ng = flattenedScene._cam._transform.fwd();
                 Tungsten::DirectionSample direction;
                 const vec3 P = M.inverse() * vec3(2.f*x/float(target.size.x-1)-1, -(2.f*y/float(target.size.y-1)-1), +1);
                 const vec3 d = normalize(P-O);
@@ -386,7 +382,7 @@ struct ViewApp {
                 state.reset();
                 IntersectionInfo info;
                 Vec3f emission(0.0f);
-                const Medium *medium = flattenedScene->cam().medium().get();
+                const Medium *medium = flattenedScene.cam().medium().get();
 
                 float hitDistance = 0.0f;
 #if 1
@@ -394,14 +390,14 @@ struct ViewApp {
                 for(int bounce = 0;;bounce++) {
                     info.primitive = nullptr;
                     data.primitive = nullptr;
-                    TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, flattenedScene->_userGeomId);
-                    rtcIntersect(flattenedScene->_scene, eRay);
+                    TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, flattenedScene._userGeomId);
+                    rtcIntersect(flattenedScene._scene, eRay);
 
                     bool didHit;
                     if (data.primitive) {
                         info.p = ray.pos() + ray.dir()*ray.farT();
                         info.w = ray.dir();
-                        info.epsilon = flattenedScene->DefaultEpsilon;
+                        info.epsilon = flattenedScene.DefaultEpsilon;
                         data.primitive->intersectionInfo(data, info);
                         didHit = true;
                     } else {
@@ -409,7 +405,7 @@ struct ViewApp {
                     }
                     constexpr int maxBounces = 64;
                     if((!didHit && !medium) || bounce >= maxBounces) {
-                        if(flattenedScene->intersectInfinites(ray, data, info)) {
+                        if(flattenedScene.intersectInfinites(ray, data, info)) {
                             if(wasSpecular || !info.primitive->isSamplable())
                                 emission += throughput*info.primitive->evalDirect(data, info);
                         }
@@ -423,7 +419,7 @@ struct ViewApp {
                         throughput *= mediumSample.weight;
                         hitSurface = mediumSample.exited;
                         if(hitSurface && !didHit) {
-                            if(flattenedScene->intersectInfinites(ray, data, info)) {
+                            if(flattenedScene.intersectInfinites(ray, data, info)) {
                                 if(wasSpecular || !info.primitive->isSamplable())
                                     emission += throughput*info.primitive->evalDirect(data, info);
                             }
@@ -469,15 +465,15 @@ struct ViewApp {
                             if (bounce < maxBounces - 1 && !(event.info->bsdf->lobes().isPureSpecular() || event.info->bsdf->lobes().isForward())) {
                                 //float weight; const Primitive *light = tracer.chooseLight(*event.sampler, event.info->p, weight);
                                 /*Primitive *light;
-                                if (scene->lights().empty())
+                                if (scene.lights().empty())
                                     return nullptr;
-                                if (flattenedScene->lights().size() == 1) {
+                                if (flattenedScene.lights().size() == 1) {
                                     weight = 1.0f;
-                                    light = flattenedScene->lights()[0].get();
+                                    light = flattenedScene.lights()[0].get();
                                 }float total = 0.0f;
                                 unsigned numNonNegative = 0;
                                 for (size_t i = 0; i < _lightPdf.size(); ++i) {
-                                    _lightPdf[i] = scene->lights()[i]->approximateRadiance(_threadId, p);
+                                    _lightPdf[i] = scene.lights()[i]->approximateRadiance(_threadId, p);
                                     if (_lightPdf[i] >= 0.0f) {
                                         total += _lightPdf[i];
                                         numNonNegative++;
@@ -502,13 +498,13 @@ struct ViewApp {
                                 for (size_t i = 0; i < _lightPdf.size(); ++i) {
                                     if (t < _lightPdf[i] || i == _lightPdf.size() - 1) {
                                         weight = total/_lightPdf[i];
-                                        return scene->lights()[i].get();
+                                        return scene.lights()[i].get();
                                     } else {
                                         t -= _lightPdf[i];
                                     }
                                 }*/
-                                assert(flattenedScene->lights().size() == 1);
-                                const Primitive& light = *flattenedScene->lights()[0].get();
+                                assert(flattenedScene.lights().size() == 1);
+                                const Primitive& light = *flattenedScene.lights()[0].get();
                                 /*Vec3f result = tracer.lightSample(*light, event, medium, bounce, ray, &transmittance)
                                              + tracer.bsdfSample(*light, event, medium, bounce, ray);*/
                                 Vec3f result (0.0f);
@@ -550,17 +546,17 @@ struct ViewApp {
                                             float initialFarT = lightRay.farT();
                                             Vec3f throughput(1.0f);
                                             for(;;) {
-                                                //bool didHit = flattenedScene->intersect(lightRay, data, info) && info.primitive != endCap;
+                                                //bool didHit = flattenedScene.intersect(lightRay, data, info) && info.primitive != endCap;
                                                 info.primitive = nullptr;
                                                 data.primitive = nullptr;
-                                                TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(lightRay), data, lightRay, flattenedScene->_userGeomId);
-                                                rtcIntersect(flattenedScene->scene, eRay);
+                                                TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(lightRay), data, lightRay, flattenedScene._userGeomId);
+                                                rtcIntersect(flattenedScene.scene, eRay);
 
                                                 bool didHit;
                                                 if (data.primitive) {
                                                     info.p = lightRay.pos() + lightRay.dir()*lightRay.farT();
                                                     info.w = lightRay.dir();
-                                                    info.epsilon = flattenedScene->DefaultEpsilon;
+                                                    info.epsilon = flattenedScene.DefaultEpsilon;
                                                     data.primitive->intersectionInfo(data, info);
                                                     didHit = info.primitive != &light;
                                                 } else {
@@ -674,7 +670,7 @@ struct ViewApp {
                     }
 
                     if (throughput.max() == 0.0f) {
-                        if(flattenedScene->intersectInfinites(ray, data, info)) {
+                        if(flattenedScene.intersectInfinites(ray, data, info)) {
                             if(wasSpecular || !info.primitive->isSamplable())
                                 emission += throughput*info.primitive->evalDirect(data, info);
                         }
@@ -694,14 +690,14 @@ struct ViewApp {
                 for(int bounce = 0;; bounce++) {
                     info.primitive = nullptr;
                     data.primitive = nullptr;
-                    TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, flattenedScene->_userGeomId);
-                    rtcIntersect(flattenedScene->scene, eRay);
+                    TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, flattenedScene._userGeomId);
+                    rtcIntersect(flattenedScene.scene, eRay);
 
                     bool didHit;
                     if (data.primitive) {
                         info.p = ray.pos() + ray.dir()*ray.farT();
                         info.w = ray.dir();
-                        info.epsilon = flattenedScene->DefaultEpsilon;
+                        info.epsilon = flattenedScene.DefaultEpsilon;
                         data.primitive->intersectionInfo(data, info);
                         didHit = true;
                     } else {

@@ -34,7 +34,7 @@
 
 namespace Tungsten {
 
-class Scene : public JsonSerializable
+struct Scene : public JsonSerializable
 {
     Path _srcDir;
     Path _path;
