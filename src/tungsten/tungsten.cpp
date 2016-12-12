@@ -286,16 +286,15 @@ struct ViewApp {
         _scene->camera()->M = M;
         _scene->camera()->_res.x() = view.size.x;
         _scene->camera()->_res.y() = view.size.y;
-        _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
         _flattenedScene->_cam.M = M;
         _flattenedScene->_cam._res.x() = targetSize.x;
         _flattenedScene->_cam._res.y() = targetSize.y;
         extern uint8 sRGB_forward[0x1000];
         Tungsten::SobolPathSampler sampler(random.next()[0]);
+        Tungsten::PathTracer tracer(_flattenedScene.get(), Tungsten::PathTracerSettings(), 0);
         for(uint y: range(target.size.y)) for(uint x: range(target.size.x)) {
             uint pixelIndex = y*target.size.x + x;
             sampler.startPath(pixelIndex, 0);
-            //Tungsten::Vec3f rgb = integrator._tracers[0]->traceSample(pixel, *tile.sampler);
             const vec3 O = M.inverse() * vec3(2.f*x/float(targetSize.x-1)-1, -(2.f*y/float(targetSize.y-1)-1), -1);
             Tungsten::PositionSample position;
             position.p.x() = O.x;
@@ -314,59 +313,131 @@ struct ViewApp {
             direction.weight = Vec3f(1.0f);
             direction.pdf = 1;
 
-            //Vec3f throughput (1);
+            Vec3f throughput (1);
             Ray ray(position.p, direction.d);
             ray.setPrimaryRay(true);
 
-            /*MediumSample mediumSample;
+            MediumSample mediumSample;
             SurfaceScatterEvent surfaceEvent;
-            Medium::MediumState state;
-            state.reset();*/
             IntersectionTemporary data;
+            Medium::MediumState state;
+            state.reset();
             IntersectionInfo info;
-            /*Vec3f emission(0.0f);
+            Vec3f emission(0.0f);
+            const Medium *medium = _flattenedScene->cam().medium().get();
 
             float hitDistance = 0.0f;
-            const Medium *medium = _flattenedScene->cam().medium().get();
-            int bounce = 0;*/
-            /*const bool didHit =*/ _flattenedScene->intersect(ray, data, info);
-            /*bool wasSpecular = true;
-                    while ((didHit || medium) && bounce < 64) {
-                        bool hitSurface = true;
+#if 1
+            int bounce = 0;
+            bool didHit = _flattenedScene->intersect(ray, data, info);
+            bool wasSpecular = true;
+            while ((didHit || medium) && bounce < 64) {
+                bool hitSurface = true;
+                if (medium) {
+                    if (!medium->sampleDistance(sampler, ray, state, mediumSample))
+                        goto done;
+                    throughput *= mediumSample.weight;
+                    hitSurface = mediumSample.exited;
+                    if (hitSurface && !didHit)
+                        break;
+                }
 
-                        if (hitSurface) {
-                            if(bounce == 0) hitDistance = ray.farT();
+                if (hitSurface) {
+                    hitDistance += ray.farT();
 
-                            surfaceEvent = integrator._tracers[0]->makeLocalScatterEvent(data, info, ray, tile.sampler.get());
-                            Vec3f transmittance(-1.0f);
-                            if(!integrator._tracers[0]->handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance))
-                                break;
-                        } else {
-                            if (!integrator._tracers[0]->handleVolume(*tile.sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
-                                break;
-                        }
+                    surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                    Vec3f transmittance(-1.0f);
+                    bool terminate = !tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance);
 
-                        if (throughput.max() == 0.0f)
-                            break;
+                    if (terminate)
+                        goto done;
+                } else {
+                    if (!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
+                        goto done;
+                }
 
-                        float roulettePdf = std::abs(throughput).max();
-                        if (bounce > 2 && roulettePdf < 0.1f) {
-                            if (tile.sampler->nextBoolean(roulettePdf))
-                                throughput /= roulettePdf;
-                            else
-                                break;
-                        }
+                if (throughput.max() == 0.0f)
+                    break;
 
-                        bounce++;
-                        if (bounce < 64) didHit = _flattenedScene->intersect(ray, data, info);
-                    }*/
-            /*emission[0] = d.x;
-            emission[1] = d.y;
-            emission[2] = d.z;
+                float roulettePdf = std::abs(throughput).max();
+                if (bounce > 2 && roulettePdf < 0.1f) {
+                    if (sampler.nextBoolean(roulettePdf))
+                        throughput /= roulettePdf;
+                    else
+                        goto done;
+                }
+
+                bounce++;
+                if (bounce < 64)
+                    didHit = _flattenedScene->intersect(ray, data, info);
+            }
+            if (bounce < 64)
+                tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
+            done:;
+#else
+            bool wasSpecular = true;
+            for(int bounce = 0;; bounce++) {
+                info.primitive = nullptr;
+                data.primitive = nullptr;
+                TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, _flattenedScene->_userGeomId);
+                rtcIntersect(_flattenedScene->_scene, eRay);
+
+                bool didHit;
+                if (data.primitive) {
+                    info.p = ray.pos() + ray.dir()*ray.farT();
+                    info.w = ray.dir();
+                    info.epsilon = _flattenedScene->DefaultEpsilon;
+                    data.primitive->intersectionInfo(data, info);
+                    didHit = true;
+                } else {
+                    didHit = false;
+                }
+                if((!didHit && !medium) || bounce >= 64) break;
+
+                bool hitSurface = true;
+                if (medium) {
+                    if(!medium->sampleDistance(sampler, ray, state, mediumSample)) break;
+                    throughput *= mediumSample.weight;
+                    hitSurface = mediumSample.exited;
+                    if (hitSurface && !didHit) {
+                        //if (bounce >= _settings.minBounces && bounce < _settings.maxBounces)
+                        tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
+                    }
+                }
+
+                if (hitSurface) {
+                    assert_(info.primitive);
+
+                    if(bounce == 0) hitDistance = ray.farT();
+
+                    surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                    Vec3f transmittance(-1.0f);
+                    if(!tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, /*out*/ wasSpecular, state, &transmittance))
+                        break;
+
+                } else {
+                    if(!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
+                        break;
+                }
+
+                if (throughput.max() == 0.0f) {
+                    //break;
+                    tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
+                }
+
+                float roulettePdf = std::abs(throughput).max();
+                if (bounce > 2 && roulettePdf < 0.1f) {
+                    if (sampler.nextBoolean(roulettePdf))
+                        throughput /= roulettePdf;
+                    else
+                        break;
+                }
+            }
+#endif
             const uint r = ::min(0xFFFu, uint(0xFFF*emission[0]));
             const uint g = ::min(0xFFFu, uint(0xFFF*emission[1]));
             const uint b = ::min(0xFFFu, uint(0xFFF*emission[2]));
-            target[pixelIndex] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);*/
+            target[pixelIndex] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
         }
         return unsafeShare(target);
 #else

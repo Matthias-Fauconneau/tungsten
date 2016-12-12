@@ -170,13 +170,8 @@ public:
         info.primitive = nullptr;
         data.primitive = nullptr;
 
-        if (_settings.useSceneBvh()) {
-            IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, _userGeomId);
-            rtcIntersect(_scene, eRay);
-        } else {
-            for (const Primitive *prim : _finites)
-                prim->intersect(ray, data);
-        }
+        IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, _userGeomId);
+        rtcIntersect(_scene, eRay);
 
         if (data.primitive) {
             info.p = ray.pos() + ray.dir()*ray.farT();
