@@ -107,6 +107,7 @@ static mat4 shearedPerspective(const float s, const float t) { // Sheared perspe
 
 static Folder tmp {"/var/tmp/light",currentWorkingDirectory(), true};
 
+#if 0
 struct Render {
     Render() {
         Folder cacheFolder {"teapot", tmp, true};
@@ -196,7 +197,7 @@ struct Render {
                     int bounce = 0;
                     bool didHit = _flattenedScene->intersect(ray, data, info);
                     bool wasSpecular = true;
-                    while ((didHit || medium) && bounce < 64) {
+                    while ((didHit || medium) && bounce < maxBounces) {
                         bool hitSurface = true;
                         if (medium) {
                             if (!medium->sampleDistance(sampler, ray, state, mediumSample))
@@ -233,10 +234,10 @@ struct Render {
                         }
 
                         bounce++;
-                        if (bounce < 64)
+                        if (bounce < maxBounces)
                             didHit = _flattenedScene->intersect(ray, data, info);
                     }
-                    if (bounce < 64)
+                    if (bounce < maxBounces)
                         tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
 done:;
                     targetB[pixelIndex] = emission[2];
@@ -247,11 +248,8 @@ done:;
         }
         log("Rendered",strx(uint2(N)),"x",strx(size),"images in", time);
     }
-}
-#if 0
-prerender;
+} prerender;
 #else
-;
 
 struct ViewControl : virtual Widget {
     vec2 viewYawPitch = vec2(0, 0); // Current view angles
@@ -382,7 +380,7 @@ struct ViewApp {
                 ray.setPrimaryRay(true);
 
                 MediumSample mediumSample;
-                SurfaceScatterEvent surfaceEvent;
+                SurfaceScatterEvent event;
                 IntersectionTemporary data;
                 Medium::MediumState state;
                 state.reset();
@@ -392,52 +390,126 @@ struct ViewApp {
 
                 float hitDistance = 0.0f;
 #if 1
-                int bounce = 0;
-                bool didHit = _flattenedScene->intersect(ray, data, info);
                 bool wasSpecular = true;
-                while ((didHit || medium) && bounce < 64) {
+                for(int bounce = 0;;bounce++) {
+                    info.primitive = nullptr;
+                    data.primitive = nullptr;
+                    TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, _flattenedScene->_userGeomId);
+                    rtcIntersect(_flattenedScene->_scene, eRay);
+
+                    bool didHit;
+                    if (data.primitive) {
+                        info.p = ray.pos() + ray.dir()*ray.farT();
+                        info.w = ray.dir();
+                        info.epsilon = _flattenedScene->DefaultEpsilon;
+                        data.primitive->intersectionInfo(data, info);
+                        didHit = true;
+                    } else {
+                        didHit = false;
+                    }
+                    constexpr int maxBounces = 64;
+                    if((!didHit && !medium) || bounce >= maxBounces) {
+                        if(_flattenedScene->intersectInfinites(ray, data, info)) {
+                            if(wasSpecular || !info.primitive->isSamplable())
+                                emission += throughput*info.primitive->evalDirect(data, info);
+                        }
+                        break;
+                    }
+
                     bool hitSurface = true;
                     if (medium) {
                         if (!medium->sampleDistance(sampler, ray, state, mediumSample))
-                            goto done;
+                            break;
                         throughput *= mediumSample.weight;
                         hitSurface = mediumSample.exited;
-                        if (hitSurface && !didHit)
+                        if(hitSurface && !didHit) {
+                            if(_flattenedScene->intersectInfinites(ray, data, info)) {
+                                if(wasSpecular || !info.primitive->isSamplable())
+                                    emission += throughput*info.primitive->evalDirect(data, info);
+                            }
                             break;
+                        }
                     }
 
                     if (hitSurface) {
-                        hitDistance += ray.farT();
+                        if(bounce == 0) hitDistance = ray.farT();
 
-                        surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                        //surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                        {
+                            TangentFrame frame;
+                            info.primitive->setupTangentFrame(data, info, frame);
+
+                            event = SurfaceScatterEvent(
+                                &info,
+                                &sampler,
+                                frame,
+                                frame.toLocal(-ray.dir()),
+                                BsdfLobes::AllLobes,
+                                false
+                            );
+                        }
                         Vec3f transmittance(-1.0f);
-                        bool terminate = !tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance);
 
-                        if (terminate)
-                            goto done;
-                    } else {
-                        if (!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
-                            goto done;
+                        //bool terminate = !tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance);
+
+                        const Bsdf &bsdf = *info.bsdf;
+
+                        // For forward events, the transport direction does not matter (since wi = -wo)
+                        Vec3f transparency = bsdf.eval(event.makeForwardEvent(), false);
+                        float transparencyScalar = transparency.avg();
+
+                        Vec3f wo;
+                        if (event.sampler->nextBoolean(transparencyScalar) ){
+                            wo = ray.dir();
+                            event.pdf = transparencyScalar;
+                            event.weight = transparency/transparencyScalar;
+                            event.sampledLobe = BsdfLobes::ForwardLobe;
+                            throughput *= event.weight;
+                        } else {
+                            if (bounce < maxBounces - 1) {
+                                float weight;
+                                const Primitive *light = tracer.chooseLight(*event.sampler, event.info->p, weight);
+                                emission += tracer.sampleDirect(*light, event, medium, bounce, ray, &transmittance)*weight*throughput;
+                            }
+                            if (info.primitive->isEmissive()) {
+                                if (wasSpecular || !info.primitive->isSamplable())
+                                    emission += info.primitive->evalDirect(data, info)*throughput;
+                            }
+
+                            event.requestedLobe = BsdfLobes::AllLobes;
+                            if (!bsdf.sample(event, false)) break;
+
+                            wo = event.frame.toGlobal(event.wo);
+
+                            throughput *= event.weight;
+                            wasSpecular = event.sampledLobe.hasSpecular();
+                            if (!wasSpecular)
+                                ray.setPrimaryRay(false);
+                        }
+
+                        bool geometricBackside = (wo.dot(info.Ng) < 0.0f);
+                        medium = info.primitive->selectMedium(medium, geometricBackside);
+                        state.reset();
+
+                        ray = ray.scatter(ray.hitpoint(), wo, info.epsilon);
                     }
 
-                    if (throughput.max() == 0.0f)
+                    if (throughput.max() == 0.0f) {
+                        if(_flattenedScene->intersectInfinites(ray, data, info)) {
+                            if(wasSpecular || !info.primitive->isSamplable())
+                                emission += throughput*info.primitive->evalDirect(data, info);
+                        }
                         break;
+                    }
 
                     float roulettePdf = std::abs(throughput).max();
                     if (bounce > 2 && roulettePdf < 0.1f) {
                         if (sampler.nextBoolean(roulettePdf))
                             throughput /= roulettePdf;
                         else
-                            goto done;
+                            break;
                     }
-
-                    bounce++;
-                    if (bounce < 64)
-                        didHit = _flattenedScene->intersect(ray, data, info);
                 }
-                if (bounce < 64)
-                    tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
-done:;
 #else
                 bool wasSpecular = true;
                 for(int bounce = 0;; bounce++) {
@@ -456,7 +528,7 @@ done:;
                     } else {
                         didHit = false;
                     }
-                    if((!didHit && !medium) || bounce >= 64) break;
+                    if((!didHit && !medium) || bounce >= maxBounces) break;
 
                     bool hitSurface = true;
                     if (medium) {

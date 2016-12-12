@@ -30,9 +30,9 @@
 
 namespace Tungsten {
 
-class TraceBase
+struct TraceBase
 {
-protected:
+
     const TraceableScene *_scene;
     TraceSettings _settings;
     uint32 _threadId;

@@ -535,7 +535,6 @@ bool TraceBase::handleSurface(SurfaceScatterEvent &event, IntersectionTemporary 
             if (enableLightSampling && bounce < _settings.maxBounces - 1)
                 emission += estimateDirect(event, medium, bounce + 1, ray, transmittance)*throughput;
 
-            assert(info.primitive);
             if (info.primitive->isEmissive() && bounce >= _settings.minBounces) {
                 if (!enableLightSampling || wasSpecular || !info.primitive->isSamplable())
                     emission += info.primitive->evalDirect(data, info)*throughput;
