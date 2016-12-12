@@ -539,7 +539,73 @@ struct ViewApp {
                                             info.w = lightRay.dir();
                                             light.intersectionInfo(data, info);
 
+#if 1
                                             Vec3f shadow = tracer.generalizedShadowRay(sampler, lightRay, medium, &light, bounce);
+#else
+                                            const Medium* shadowRayMedium = medium;
+                                            Vec3f shadow (0.0f);
+                                            IntersectionTemporary data;
+                                            IntersectionInfo info;
+
+                                            float initialFarT = lightRay.farT();
+                                            Vec3f throughput(1.0f);
+                                            for(;;) {
+                                                //bool didHit = _flattenedScene->intersect(lightRay, data, info) && info.primitive != endCap;
+                                                info.primitive = nullptr;
+                                                data.primitive = nullptr;
+                                                TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(lightRay), data, lightRay, _flattenedScene->_userGeomId);
+                                                rtcIntersect(_flattenedScene->_scene, eRay);
+
+                                                bool didHit;
+                                                if (data.primitive) {
+                                                    info.p = lightRay.pos() + lightRay.dir()*lightRay.farT();
+                                                    info.w = lightRay.dir();
+                                                    info.epsilon = _flattenedScene->DefaultEpsilon;
+                                                    data.primitive->intersectionInfo(data, info);
+                                                    didHit = info.primitive != &light;
+                                                } else {
+                                                    didHit = false;
+                                                }
+
+                                                if (didHit) {
+                                                    if (!info.bsdf->lobes().hasForward()) break;
+
+                                                    //SurfaceScatterEvent event = makeLocalScatterEvent(data, info, lightRay, nullptr);
+                                                    TangentFrame frame;
+                                                    info.primitive->setupTangentFrame(data, info, frame);
+
+                                                    SurfaceScatterEvent event = SurfaceScatterEvent(
+                                                                &info,
+                                                                &sampler,
+                                                                frame,
+                                                                frame.toLocal(-ray.dir()),
+                                                                BsdfLobes::AllLobes,
+                                                                false
+                                                                );
+
+                                                    // For forward events, the transport direction does not matter (since wi = -wo)
+                                                    Vec3f transparency = info.bsdf->eval(event.makeForwardEvent(), false);
+                                                    if (transparency == 0.0f) break;
+
+                                                    throughput *= transparency;
+                                                    bounce++;
+
+                                                    if (bounce >= maxBounces) break;
+                                                }
+
+                                                if (shadowRayMedium) throughput *= shadowRayMedium->transmittance(sampler, lightRay);
+                                                if (info.primitive == nullptr || info.primitive == &light) {
+                                                    shadow = throughput;
+                                                    break;
+                                                }
+                                                shadowRayMedium = info.primitive->selectMedium(shadowRayMedium, !info.primitive->hitBackside(data));
+
+                                                lightRay.setPos(lightRay.hitpoint());
+                                                initialFarT -= lightRay.farT();
+                                                lightRay.setNearT(info.epsilon);
+                                                lightRay.setFarT(initialFarT);
+                                            }
+#endif
                                             transmittance = shadow;
                                             if(shadow != 0.0f) {
                                                 Vec3f e = shadow*light.evalDirect(data, info);
@@ -550,7 +616,38 @@ struct ViewApp {
                                         }
                                     }
                                 }
-                                result += tracer.bsdfSample(light, event, medium, bounce, ray);
+                                //result += tracer.bsdfSample(light, event, medium, bounce, ray);
+                                event.requestedLobe = BsdfLobes::AllButSpecular;
+                                if(event.info->bsdf->sample(event, false) && event.weight != 0.0f) {
+                                    Vec3f wo = event.frame.toGlobal(event.wo);
+
+                                    bool geometricBackside = (wo.dot(event.info->Ng) < 0.0f);
+                                    medium = event.info->primitive->selectMedium(medium, geometricBackside);
+
+                                    Ray bsdfRay = ray.scatter(event.info->p, wo, event.info->epsilon);
+                                    bsdfRay.setPrimaryRay(false);
+
+                                    IntersectionTemporary data;
+                                    IntersectionInfo info;
+                                    //Vec3f e = attenuatedEmission(*event.sampler, light, medium, -1.0f, data, info, bounce, bsdfRay, nullptr);
+                                    const float expectedDist = sample.dist;
+                                    CONSTEXPR float fudgeFactor = 1.0f + 1e-3f;
+
+                                    //if (light.isDirac()) bsdfRay.setFarT(expectedDist);
+                                    if(light.intersect(bsdfRay, data) && bsdfRay.farT()*fudgeFactor >= expectedDist) {
+                                        info.p = bsdfRay.pos() + bsdfRay.dir()*bsdfRay.farT();
+                                        info.w = bsdfRay.dir();
+                                        light.intersectionInfo(data, info);
+                                        Vec3f shadow = tracer.generalizedShadowRay(sampler, bsdfRay, medium, &light, bounce);
+                                        transmittance = shadow;
+                                        if(shadow != 0.0f) {
+                                            Vec3f e = shadow*light.evalDirect(data, info);
+                                            if (e != 0.0f) {
+                                                result += e*event.weight*SampleWarp::powerHeuristic(event.pdf, light.directPdf(_threadId, data, info, event.info->p));
+                                            }
+                                        }
+                                    }
+                                }
                                 emission += result*/*weight**/throughput;
                             }
                             if (info.primitive->isEmissive()) {
