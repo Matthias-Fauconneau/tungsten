@@ -351,7 +351,7 @@ struct ViewApp {
         _flattenedScene->_cam._res.x() = targetSize.x;
         _flattenedScene->_cam._res.y() = targetSize.y;
         extern uint8 sRGB_forward[0x1000];
-        parallel_chunk(target.size.y, [this, &target, M](uint, uint start, uint sizeI) {
+        parallel_chunk(target.size.y, [this, &target, M](uint _threadId, uint start, uint sizeI) {
             Tungsten::SobolPathSampler sampler(readCycleCounter());
             Tungsten::PathTracer tracer(_flattenedScene.get(), Tungsten::PathTracerSettings(), 0);
             for(int y: range(start, start+sizeI)) for(uint x: range(target.size.x)) {
@@ -466,10 +466,92 @@ struct ViewApp {
                             event.sampledLobe = BsdfLobes::ForwardLobe;
                             throughput *= event.weight;
                         } else {
-                            if (bounce < maxBounces - 1) {
-                                float weight;
-                                const Primitive *light = tracer.chooseLight(*event.sampler, event.info->p, weight);
-                                emission += tracer.sampleDirect(*light, event, medium, bounce, ray, &transmittance)*weight*throughput;
+                            if (bounce < maxBounces - 1 && !(event.info->bsdf->lobes().isPureSpecular() || event.info->bsdf->lobes().isForward())) {
+                                //float weight; const Primitive *light = tracer.chooseLight(*event.sampler, event.info->p, weight);
+                                /*Primitive *light;
+                                if (_scene->lights().empty())
+                                    return nullptr;
+                                if (_flattenedScene->lights().size() == 1) {
+                                    weight = 1.0f;
+                                    light = _flattenedScene->lights()[0].get();
+                                }float total = 0.0f;
+                                unsigned numNonNegative = 0;
+                                for (size_t i = 0; i < _lightPdf.size(); ++i) {
+                                    _lightPdf[i] = _scene->lights()[i]->approximateRadiance(_threadId, p);
+                                    if (_lightPdf[i] >= 0.0f) {
+                                        total += _lightPdf[i];
+                                        numNonNegative++;
+                                    }
+                                }
+                                if (numNonNegative == 0) {
+                                    for (size_t i = 0; i < _lightPdf.size(); ++i)
+                                        _lightPdf[i] = 1.0f;
+                                    total = _lightPdf.size();
+                                } else if (numNonNegative < _lightPdf.size()) {
+                                    for (size_t i = 0; i < _lightPdf.size(); ++i) {
+                                        float uniformWeight = (total == 0.0f ? 1.0f : total)/numNonNegative;
+                                        if (_lightPdf[i] < 0.0f) {
+                                            _lightPdf[i] = uniformWeight;
+                                            total += uniformWeight;
+                                        }
+                                    }
+                                }
+                                if (total == 0.0f)
+                                    return nullptr;
+                                float t = sampler.next1D()*total;
+                                for (size_t i = 0; i < _lightPdf.size(); ++i) {
+                                    if (t < _lightPdf[i] || i == _lightPdf.size() - 1) {
+                                        weight = total/_lightPdf[i];
+                                        return _scene->lights()[i].get();
+                                    } else {
+                                        t -= _lightPdf[i];
+                                    }
+                                }*/
+                                assert(_flattenedScene->lights().size() == 1);
+                                const Primitive& light = *_flattenedScene->lights()[0].get();
+                                /*Vec3f result = tracer.lightSample(*light, event, medium, bounce, ray, &transmittance)
+                                             + tracer.bsdfSample(*light, event, medium, bounce, ray);*/
+                                Vec3f result (0.0f);
+                                LightSample sample;
+                                if(light.sampleDirect(_threadId, event.info->p, *event.sampler, /*out*/ sample)) {
+                                    event.wo = event.frame.toLocal(sample.d);
+
+                                    bool geometricBackside = (sample.d.dot(event.info->Ng) < 0.0f);
+                                    medium = event.info->primitive->selectMedium(medium, geometricBackside);
+
+                                    event.requestedLobe = BsdfLobes::AllButSpecular;
+
+                                    Vec3f f = event.info->bsdf->eval(event, false);
+                                    if(f != 0.0f) {
+
+                                        Ray lightRay = ray.scatter(event.info->p, sample.d, event.info->epsilon);
+                                        lightRay.setPrimaryRay(false);
+
+                                        IntersectionTemporary data;
+                                        IntersectionInfo info;
+                                        //Vec3f e = tracer.attenuatedEmission(*event.sampler, light, medium, sample.dist, data, info, bounce, lightRay, transmittance);
+                                        const float expectedDist = sample.dist;
+                                        CONSTEXPR float fudgeFactor = 1.0f + 1e-3f;
+
+                                        //if (light.isDirac()) lightRay.setFarT(expectedDist);
+                                        if(light.intersect(lightRay, data) && lightRay.farT()*fudgeFactor >= expectedDist) {
+                                            info.p = lightRay.pos() + lightRay.dir()*lightRay.farT();
+                                            info.w = lightRay.dir();
+                                            light.intersectionInfo(data, info);
+
+                                            Vec3f shadow = tracer.generalizedShadowRay(sampler, lightRay, medium, &light, bounce);
+                                            transmittance = shadow;
+                                            if(shadow != 0.0f) {
+                                                Vec3f e = shadow*light.evalDirect(data, info);
+                                                if (e != 0.0f) {
+                                                    result += f*e/sample.pdf*SampleWarp::powerHeuristic(sample.pdf, event.info->bsdf->pdf(event));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                result += tracer.bsdfSample(light, event, medium, bounce, ray);
+                                emission += result*/*weight**/throughput;
                             }
                             if (info.primitive->isEmissive()) {
                                 if (wasSpecular || !info.primitive->isSamplable())
