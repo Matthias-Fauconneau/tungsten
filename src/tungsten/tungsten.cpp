@@ -134,61 +134,124 @@ struct Render {
         _scene->rendererSettings().setSpp(1);
         _scene->camera()->_res.x() = size.x;
         _scene->camera()->_res.y() = size.y;
+        std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
+        _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
+        _flattenedScene->_cam._res.x() = size.x;
+        _flattenedScene->_cam._res.y() = size.y;
         Time time (true); Time lastReport (true);
         //parallel_for(0, N*N, [&](uint unused threadID, size_t stIndex) {
         for(int stIndex: range(N*N)) {
-            Time time {true};
-
             int sIndex = stIndex%N, tIndex = stIndex/N;
             if(lastReport.seconds()>1) { log(strD(stIndex,N*N)); lastReport.reset(); }
 
-            //ImageH Z (unsafeRef(field.slice(((0ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
-            ImageH B (unsafeRef(field.slice(((1ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
-            ImageH G (unsafeRef(field.slice(((2ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
-            ImageH R (unsafeRef(field.slice(((3ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
-
             // Sheared perspective (rectification)
             const float s = sIndex/float(N-1), t = tIndex/float(N-1);
-            //::render(size, , B, G, R);
-            _scene->camera()->M = shearedPerspective(s, t) * camera;
-            Time setupTime {true};
-            std::unique_ptr<Tungsten::TraceableScene> _flattenedScene;
-            _flattenedScene.reset(_scene->makeTraceable(readCycleCounter()));
-            Tungsten::Integrator& integrator = _flattenedScene->integrator();
-            setupTime.stop();
-            Time renderTime {true};
-            integrator.startRender([](){});
-            integrator.waitForCompletion();
-            renderTime.stop();
-            const float* RGB = (float*)_scene->camera()->_colorBuffer->_bufferA.get();
-            const half* targetB = B.begin();
-            const half* targetG = G.begin();
-            const half* targetR = R.begin();
-            for(uint i=0; i<size.y*size.x; i+=2*8) {
-                v8sf v0 = *(v8sf*)(RGB+i*3+0*8); // R G B R G B R G
-                v8sf v1 = *(v8sf*)(RGB+i*3+1*8); // B R G B R G B R
-                v8sf v2 = *(v8sf*)(RGB+i*3+2*8); // G B R G B R G B
-                v8sf v3 = *(v8sf*)(RGB+i*3+3*8); // R G B R G B R G
-                v8sf v4 = *(v8sf*)(RGB+i*3+4*8); // B R G B R G B R
-                v8sf v5 = *(v8sf*)(RGB+i*3+5*8); // G B R G B R G B
-                v16hf v01 = toHalf(v16sf(v0,v1));
-                v16hf v23 = toHalf(v16sf(v2,v3));
-                v16hf v45 = toHalf(v16sf(v4,v5));
-                *(v16hf*)(targetR+i) = __builtin_shufflevector(__builtin_shufflevector(v01, v23, 0,3,6, 9, 12,15,18,21, 24,27,-1,-1, -1,-1,-1,-1), v45, 0,1,2,3, 4,5,6,7, 8,9,14,17, 20,23,26,29);
-                *(v16hf*)(targetG+i) = __builtin_shufflevector(__builtin_shufflevector(v01, v23, 1,4,7,10, 13,16,19,22, 25,28,-1,-1, -1,-1,-1,-1), v45, 0,1,2,3, 4,5,6,7, 8,9,15,18, 21,24,27,30);
-                *(v16hf*)(targetB+i) = __builtin_shufflevector(__builtin_shufflevector(v01, v23, 2,5,8,11, 14,17,20,23, 26,29,-1,-1, -1,-1,-1,-1), v45, 0,1,2,3, 4,5,6,7, 8,9,16,19, 22,25,28,31);
-            }
-            assert_(renderTime.nanoseconds() > time.nanoseconds()*2/3, strD(renderTime, time), strD(setupTime, time));
-            log(strD(renderTime, time), strD(setupTime, time));
+            const mat4 M = shearedPerspective(s, t) * camera;
+            _flattenedScene->_cam.M = M;
+            parallel_chunk(size.y, [&_flattenedScene, M, size, tIndex, sIndex, field](uint, uint start, uint sizeI) {
+                //ImageH Z (unsafeRef(field.slice(((0ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
+                ImageH B (unsafeRef(field.slice(((1ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
+                ImageH G (unsafeRef(field.slice(((2ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
+                ImageH R (unsafeRef(field.slice(((3ull*N+tIndex)*N+sIndex)*size.y*size.x, size.y*size.x)), size);
+                half* const targetB = B.begin();
+                half* const targetG = G.begin();
+                half* const targetR = R.begin();
+                Tungsten::SobolPathSampler sampler(readCycleCounter());
+                Tungsten::PathTracer tracer(_flattenedScene.get(), Tungsten::PathTracerSettings(), 0);
+                for(int y: range(start, start+sizeI)) for(uint x: range(size.x)) {
+                    uint pixelIndex = y*size.x + x;
+                    sampler.startPath(pixelIndex, 0);
+                    const vec3 O = M.inverse() * vec3(2.f*x/float(size.x-1)-1, -(2.f*y/float(size.y-1)-1), -1);
+                    Tungsten::PositionSample position;
+                    position.p.x() = O.x;
+                    position.p.y() = O.y;
+                    position.p.z() = O.z;
+                    using namespace Tungsten;
+                    position.weight = Vec3f(1.0f);
+                    position.pdf = 1.0f;
+                    position.Ng = _flattenedScene->_cam._transform.fwd();
+                    Tungsten::DirectionSample direction;
+                    const vec3 P = M.inverse() * vec3(2.f*x/float(size.x-1)-1, -(2.f*y/float(size.y-1)-1), +1);
+                    const vec3 d = normalize(P-O);
+                    direction.d.x() = d.x;
+                    direction.d.y() = d.y;
+                    direction.d.z() = d.z;
+                    direction.weight = Vec3f(1.0f);
+                    direction.pdf = 1;
+
+                    Vec3f throughput (1);
+                    Ray ray(position.p, direction.d);
+                    ray.setPrimaryRay(true);
+
+                    MediumSample mediumSample;
+                    SurfaceScatterEvent surfaceEvent;
+                    IntersectionTemporary data;
+                    Medium::MediumState state;
+                    state.reset();
+                    IntersectionInfo info;
+                    Vec3f emission(0.0f);
+                    const Medium *medium = _flattenedScene->cam().medium().get();
+
+                    float hitDistance = 0.0f;
+                    int bounce = 0;
+                    bool didHit = _flattenedScene->intersect(ray, data, info);
+                    bool wasSpecular = true;
+                    while ((didHit || medium) && bounce < 64) {
+                        bool hitSurface = true;
+                        if (medium) {
+                            if (!medium->sampleDistance(sampler, ray, state, mediumSample))
+                                goto done;
+                            throughput *= mediumSample.weight;
+                            hitSurface = mediumSample.exited;
+                            if (hitSurface && !didHit)
+                                break;
+                        }
+
+                        if (hitSurface) {
+                            hitDistance += ray.farT();
+
+                            surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                            Vec3f transmittance(-1.0f);
+                            bool terminate = !tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance);
+
+                            if (terminate)
+                                goto done;
+                        } else {
+                            if (!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
+                                goto done;
+                        }
+
+                        if (throughput.max() == 0.0f)
+                            break;
+
+                        float roulettePdf = std::abs(throughput).max();
+                        if (bounce > 2 && roulettePdf < 0.1f) {
+                            if (sampler.nextBoolean(roulettePdf))
+                                throughput /= roulettePdf;
+                            else
+                                goto done;
+                        }
+
+                        bounce++;
+                        if (bounce < 64)
+                            didHit = _flattenedScene->intersect(ray, data, info);
+                    }
+                    if (bounce < 64)
+                        tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
+done:;
+                    targetB[pixelIndex] = emission[2];
+                    targetG[pixelIndex] = emission[1];
+                    targetR[pixelIndex] = emission[0];
+                }
+            });
         }
         log("Rendered",strx(uint2(N)),"x",strx(size),"images in", time);
     }
 }
-#if 1
-;
-#else
+#if 0
 prerender;
-#endif
+#else
+;
 
 struct ViewControl : virtual Widget {
     vec2 viewYawPitch = vec2(0, 0); // Current view angles
@@ -290,155 +353,157 @@ struct ViewApp {
         _flattenedScene->_cam._res.x() = targetSize.x;
         _flattenedScene->_cam._res.y() = targetSize.y;
         extern uint8 sRGB_forward[0x1000];
-        Tungsten::SobolPathSampler sampler(random.next()[0]);
-        Tungsten::PathTracer tracer(_flattenedScene.get(), Tungsten::PathTracerSettings(), 0);
-        for(uint y: range(target.size.y)) for(uint x: range(target.size.x)) {
-            uint pixelIndex = y*target.size.x + x;
-            sampler.startPath(pixelIndex, 0);
-            const vec3 O = M.inverse() * vec3(2.f*x/float(targetSize.x-1)-1, -(2.f*y/float(targetSize.y-1)-1), -1);
-            Tungsten::PositionSample position;
-            position.p.x() = O.x;
-            position.p.y() = O.y;
-            position.p.z() = O.z;
-            using namespace Tungsten;
-            position.weight = Vec3f(1.0f);
-            position.pdf = 1.0f;
-            position.Ng = _flattenedScene->_cam._transform.fwd();
-            Tungsten::DirectionSample direction;
-            const vec3 P = M.inverse() * vec3(2.f*x/float(targetSize.x-1)-1, -(2.f*y/float(targetSize.y-1)-1), +1);
-            const vec3 d = normalize(P-O);
-            direction.d.x() = d.x;
-            direction.d.y() = d.y;
-            direction.d.z() = d.z;
-            direction.weight = Vec3f(1.0f);
-            direction.pdf = 1;
+        parallel_chunk(target.size.y, [this, &target, M](uint, uint start, uint sizeI) {
+            Tungsten::SobolPathSampler sampler(readCycleCounter());
+            Tungsten::PathTracer tracer(_flattenedScene.get(), Tungsten::PathTracerSettings(), 0);
+            for(int y: range(start, start+sizeI)) for(uint x: range(target.size.x)) {
+                uint pixelIndex = y*target.size.x + x;
+                sampler.startPath(pixelIndex, 0);
+                const vec3 O = M.inverse() * vec3(2.f*x/float(target.size.x-1)-1, -(2.f*y/float(target.size.y-1)-1), -1);
+                Tungsten::PositionSample position;
+                position.p.x() = O.x;
+                position.p.y() = O.y;
+                position.p.z() = O.z;
+                using namespace Tungsten;
+                position.weight = Vec3f(1.0f);
+                position.pdf = 1.0f;
+                position.Ng = _flattenedScene->_cam._transform.fwd();
+                Tungsten::DirectionSample direction;
+                const vec3 P = M.inverse() * vec3(2.f*x/float(target.size.x-1)-1, -(2.f*y/float(target.size.y-1)-1), +1);
+                const vec3 d = normalize(P-O);
+                direction.d.x() = d.x;
+                direction.d.y() = d.y;
+                direction.d.z() = d.z;
+                direction.weight = Vec3f(1.0f);
+                direction.pdf = 1;
 
-            Vec3f throughput (1);
-            Ray ray(position.p, direction.d);
-            ray.setPrimaryRay(true);
+                Vec3f throughput (1);
+                Ray ray(position.p, direction.d);
+                ray.setPrimaryRay(true);
 
-            MediumSample mediumSample;
-            SurfaceScatterEvent surfaceEvent;
-            IntersectionTemporary data;
-            Medium::MediumState state;
-            state.reset();
-            IntersectionInfo info;
-            Vec3f emission(0.0f);
-            const Medium *medium = _flattenedScene->cam().medium().get();
+                MediumSample mediumSample;
+                SurfaceScatterEvent surfaceEvent;
+                IntersectionTemporary data;
+                Medium::MediumState state;
+                state.reset();
+                IntersectionInfo info;
+                Vec3f emission(0.0f);
+                const Medium *medium = _flattenedScene->cam().medium().get();
 
-            float hitDistance = 0.0f;
+                float hitDistance = 0.0f;
 #if 1
-            int bounce = 0;
-            bool didHit = _flattenedScene->intersect(ray, data, info);
-            bool wasSpecular = true;
-            while ((didHit || medium) && bounce < 64) {
-                bool hitSurface = true;
-                if (medium) {
-                    if (!medium->sampleDistance(sampler, ray, state, mediumSample))
-                        goto done;
-                    throughput *= mediumSample.weight;
-                    hitSurface = mediumSample.exited;
-                    if (hitSurface && !didHit)
+                int bounce = 0;
+                bool didHit = _flattenedScene->intersect(ray, data, info);
+                bool wasSpecular = true;
+                while ((didHit || medium) && bounce < 64) {
+                    bool hitSurface = true;
+                    if (medium) {
+                        if (!medium->sampleDistance(sampler, ray, state, mediumSample))
+                            goto done;
+                        throughput *= mediumSample.weight;
+                        hitSurface = mediumSample.exited;
+                        if (hitSurface && !didHit)
+                            break;
+                    }
+
+                    if (hitSurface) {
+                        hitDistance += ray.farT();
+
+                        surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                        Vec3f transmittance(-1.0f);
+                        bool terminate = !tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance);
+
+                        if (terminate)
+                            goto done;
+                    } else {
+                        if (!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
+                            goto done;
+                    }
+
+                    if (throughput.max() == 0.0f)
                         break;
+
+                    float roulettePdf = std::abs(throughput).max();
+                    if (bounce > 2 && roulettePdf < 0.1f) {
+                        if (sampler.nextBoolean(roulettePdf))
+                            throughput /= roulettePdf;
+                        else
+                            goto done;
+                    }
+
+                    bounce++;
+                    if (bounce < 64)
+                        didHit = _flattenedScene->intersect(ray, data, info);
                 }
-
-                if (hitSurface) {
-                    hitDistance += ray.farT();
-
-                    surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
-                    Vec3f transmittance(-1.0f);
-                    bool terminate = !tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, wasSpecular, state, &transmittance);
-
-                    if (terminate)
-                        goto done;
-                } else {
-                    if (!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
-                        goto done;
-                }
-
-                if (throughput.max() == 0.0f)
-                    break;
-
-                float roulettePdf = std::abs(throughput).max();
-                if (bounce > 2 && roulettePdf < 0.1f) {
-                    if (sampler.nextBoolean(roulettePdf))
-                        throughput /= roulettePdf;
-                    else
-                        goto done;
-                }
-
-                bounce++;
                 if (bounce < 64)
-                    didHit = _flattenedScene->intersect(ray, data, info);
-            }
-            if (bounce < 64)
-                tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
-            done:;
+                    tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
+done:;
 #else
-            bool wasSpecular = true;
-            for(int bounce = 0;; bounce++) {
-                info.primitive = nullptr;
-                data.primitive = nullptr;
-                TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, _flattenedScene->_userGeomId);
-                rtcIntersect(_flattenedScene->_scene, eRay);
+                bool wasSpecular = true;
+                for(int bounce = 0;; bounce++) {
+                    info.primitive = nullptr;
+                    data.primitive = nullptr;
+                    TraceableScene::IntersectionRay eRay(EmbreeUtil::convert(ray), data, ray, _flattenedScene->_userGeomId);
+                    rtcIntersect(_flattenedScene->_scene, eRay);
 
-                bool didHit;
-                if (data.primitive) {
-                    info.p = ray.pos() + ray.dir()*ray.farT();
-                    info.w = ray.dir();
-                    info.epsilon = _flattenedScene->DefaultEpsilon;
-                    data.primitive->intersectionInfo(data, info);
-                    didHit = true;
-                } else {
-                    didHit = false;
-                }
-                if((!didHit && !medium) || bounce >= 64) break;
+                    bool didHit;
+                    if (data.primitive) {
+                        info.p = ray.pos() + ray.dir()*ray.farT();
+                        info.w = ray.dir();
+                        info.epsilon = _flattenedScene->DefaultEpsilon;
+                        data.primitive->intersectionInfo(data, info);
+                        didHit = true;
+                    } else {
+                        didHit = false;
+                    }
+                    if((!didHit && !medium) || bounce >= 64) break;
 
-                bool hitSurface = true;
-                if (medium) {
-                    if(!medium->sampleDistance(sampler, ray, state, mediumSample)) break;
-                    throughput *= mediumSample.weight;
-                    hitSurface = mediumSample.exited;
-                    if (hitSurface && !didHit) {
-                        //if (bounce >= _settings.minBounces && bounce < _settings.maxBounces)
+                    bool hitSurface = true;
+                    if (medium) {
+                        if(!medium->sampleDistance(sampler, ray, state, mediumSample)) break;
+                        throughput *= mediumSample.weight;
+                        hitSurface = mediumSample.exited;
+                        if (hitSurface && !didHit) {
+                            //if (bounce >= _settings.minBounces && bounce < _settings.maxBounces)
+                            tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
+                        }
+                    }
+
+                    if (hitSurface) {
+                        assert_(info.primitive);
+
+                        if(bounce == 0) hitDistance = ray.farT();
+
+                        surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
+                        Vec3f transmittance(-1.0f);
+                        if(!tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, /*out*/ wasSpecular, state, &transmittance))
+                            break;
+
+                    } else {
+                        if(!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
+                            break;
+                    }
+
+                    if (throughput.max() == 0.0f) {
+                        //break;
                         tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
                     }
+
+                    float roulettePdf = std::abs(throughput).max();
+                    if (bounce > 2 && roulettePdf < 0.1f) {
+                        if (sampler.nextBoolean(roulettePdf))
+                            throughput /= roulettePdf;
+                        else
+                            break;
+                    }
                 }
-
-                if (hitSurface) {
-                    assert_(info.primitive);
-
-                    if(bounce == 0) hitDistance = ray.farT();
-
-                    surfaceEvent = tracer.makeLocalScatterEvent(data, info, ray, &sampler);
-                    Vec3f transmittance(-1.0f);
-                    if(!tracer.handleSurface(surfaceEvent, data, info, medium, bounce, false, true, ray, throughput, emission, /*out*/ wasSpecular, state, &transmittance))
-                        break;
-
-                } else {
-                    if(!tracer.handleVolume(sampler, mediumSample, medium, bounce, false, true, ray, throughput, emission, wasSpecular))
-                        break;
-                }
-
-                if (throughput.max() == 0.0f) {
-                    //break;
-                    tracer.handleInfiniteLights(data, info, true, ray, throughput, wasSpecular, emission);
-                }
-
-                float roulettePdf = std::abs(throughput).max();
-                if (bounce > 2 && roulettePdf < 0.1f) {
-                    if (sampler.nextBoolean(roulettePdf))
-                        throughput /= roulettePdf;
-                    else
-                        break;
-                }
-            }
 #endif
-            const uint r = ::min(0xFFFu, uint(0xFFF*emission[0]));
-            const uint g = ::min(0xFFFu, uint(0xFFF*emission[1]));
-            const uint b = ::min(0xFFFu, uint(0xFFF*emission[2]));
-            target[pixelIndex] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
-        }
+                const uint r = ::min(0xFFFu, uint(0xFFF*emission[0]));
+                const uint g = ::min(0xFFFu, uint(0xFFF*emission[1]));
+                const uint b = ::min(0xFFFu, uint(0xFFF*emission[2]));
+                target[pixelIndex] = byte4(sRGB_forward[b], sRGB_forward[g], sRGB_forward[r], 0xFF);
+            }
+        });
         return unsafeShare(target);
 #else
         mat4 M;
@@ -526,3 +591,4 @@ struct ViewApp {
         return target;
     }
 } view;
+#endif
