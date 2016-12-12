@@ -189,8 +189,8 @@ void PathTraceIntegrator::prepareForRender(TraceableScene &scene, uint32 seed)
     advanceSpp();
     scene.cam().requestColorBuffer();
 
-    for (uint32 i = 0; i < ThreadUtils::pool->threadCount(); ++i)
-        _tracers.emplace_back(new PathTracer(&scene, _settings, i));
+    /*for (uint32 i = 0; i < ThreadUtils::pool->threadCount(); ++i)
+        _tracers.emplace_back(new PathTracer(&scene, _settings, i));*/
 
     _w = scene.cam().resolution().x();
     _h = scene.cam().resolution().y();

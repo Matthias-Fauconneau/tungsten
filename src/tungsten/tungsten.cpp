@@ -1,7 +1,7 @@
-#include "Shared.hpp"
-#include "core/integrators/path_tracer/PathTraceIntegrator.hpp"
+#include "core/thread/ThreadUtils.hpp"
+#include "io/Scene.hpp"
+#include "integrators/TraceBase.hpp"
 #include "core/sampling/SobolPathSampler.hpp"
-#include "core/thread/ThreadPool.hpp"
 #define Type typename
 #include "matrix.h"
 #include "interface.h"
@@ -295,7 +295,6 @@ struct ViewApp {
 
     ViewApp() {
         Tungsten::EmbreeUtil::initDevice();
-        Tungsten::ThreadUtils::startThreads(8);
         _scene.reset(Tungsten::Scene::load(Tungsten::Path("scene.json")));
         _scene->loadResources();
         _scene->camera()->_res.x() = view.size.x;
@@ -344,16 +343,16 @@ struct ViewApp {
         const mat4 camera = parseCamera(readFile("scene.json"));
         const float s = (angles.x+PI/3)/(2*PI/3), t = (angles.y+PI/3)/(2*PI/3);
         const mat4 M = shearedPerspective(s, t) * camera;
-        _scene->camera()->M = M;
+        /*_scene->camera()->M = M;
         _scene->camera()->_res.x() = view.size.x;
         _scene->camera()->_res.y() = view.size.y;
         _flattenedScene->_cam.M = M;
         _flattenedScene->_cam._res.x() = targetSize.x;
-        _flattenedScene->_cam._res.y() = targetSize.y;
+        _flattenedScene->_cam._res.y() = targetSize.y;*/
         extern uint8 sRGB_forward[0x1000];
         parallel_chunk(target.size.y, [this, &target, M](uint _threadId, uint start, uint sizeI) {
             Tungsten::SobolPathSampler sampler(readCycleCounter());
-            Tungsten::PathTracer tracer(_flattenedScene.get(), Tungsten::PathTracerSettings(), 0);
+            Tungsten::TraceBase tracer(_flattenedScene.get(), Tungsten::TraceSettings(), 0);
             for(int y: range(start, start+sizeI)) for(uint x: range(target.size.x)) {
                 uint pixelIndex = y*target.size.x + x;
                 sampler.startPath(pixelIndex, 0);

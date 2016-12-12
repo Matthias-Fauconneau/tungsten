@@ -35,10 +35,10 @@ static void twoWaySahSplit(uint32 start, uint32 end, PrimVector &prims, const Bo
     if (numPrims <= 64) {
         // O(n log n) exact SAH split for small workloads
         FullSahSplitter().twoWaySahSplit(start, end, prims, geomBox, centroidBox, split);
-    } else if (numPrims <= 1024*1024) {
+    } else /*if (numPrims <= 1024*1024)*/ {
         // O(n) approximate binned SAH split for medium workloads
         BinnedSahSplitter().fullSplit(start, end, prims, geomBox, centroidBox, split);
-    } else {
+    } /*else {
         // Parallel O(n) approximate binned SAH split with
         // serial reduce for large workloads
 
@@ -58,7 +58,7 @@ static void twoWaySahSplit(uint32 start, uint32 end, PrimVector &prims, const Bo
             splitters[0].merge(splitters[i]);
 
         splitters[0].twoWaySahSplit(start, end, prims, geomBox, split);
-    }
+    }*/
 }
 
 static uint32 sahSplit(uint32 starts[], uint32 ends[], Box3f geomBoxes[],
@@ -129,7 +129,7 @@ static void recursiveBuild(BuildResult &result, NaiveBvhNode &dst, uint32 start,
         for (unsigned i = 0; i < childCount; ++i)
             dst.setChild(i, new NaiveBvhNode());
 
-        if (numPrims <= 32*1024) {
+        /*if (numPrims <= 32*1024)*/ {
             // Perform single threaded recursive build for small workloads
             for (unsigned i = 0; i < childCount; ++i) {
                 BuildResult recursiveResult;
@@ -138,7 +138,7 @@ static void recursiveBuild(BuildResult &result, NaiveBvhNode &dst, uint32 start,
                 result.nodeCount += recursiveResult.nodeCount;
                 result.depth = max(result.depth, recursiveResult.depth + 1);
             }
-        } else {
+        } /*else {
             // Enqueue parallel build for large workloads
             BuildResult results[4];
             std::shared_ptr<TaskGroup> group = ThreadUtils::pool->enqueue([&](uint32 i, uint32, uint32) {
@@ -153,7 +153,7 @@ static void recursiveBuild(BuildResult &result, NaiveBvhNode &dst, uint32 start,
                 result.nodeCount += results[i].nodeCount;
                 result.depth = max(result.depth, results[i].depth + 1);
             }
-        }
+        }*/
     }
 }
 
