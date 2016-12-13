@@ -7,12 +7,7 @@
 #include "phasefunctions/IsotropicPhaseFunction.hpp"
 #include "phasefunctions/RayleighPhaseFunction.hpp"
 
-#include "integrators/bidirectional_path_tracer/BidirectionalPathTraceIntegrator.hpp"
-#include "integrators/progressive_photon_map/ProgressivePhotonMapIntegrator.hpp"
-#include "integrators/light_tracer/LightTraceIntegrator.hpp"
-#include "integrators/kelemen_mlt/KelemenMltIntegrator.hpp"
 #include "integrators/path_tracer/PathTraceIntegrator.hpp"
-#include "integrators/photon_map/PhotonMapIntegrator.hpp"
 
 #include "primitives/InfiniteSphereCap.hpp"
 #include "primitives/InfiniteSphere.hpp"
@@ -259,24 +254,7 @@ std::shared_ptr<Camera> Scene::instantiateCamera(std::string type, const rapidjs
 
 std::shared_ptr<Integrator> Scene::instantiateIntegrator(std::string type, const rapidjson::Value &value) const
 {
-    std::shared_ptr<Integrator> result;
-    if (type == "path_tracer")
-        result = std::make_shared<PathTraceIntegrator>();
-    else if (type == "light_tracer")
-        result = std::make_shared<LightTraceIntegrator>();
-    else if (type == "photon_map")
-        result = std::make_shared<PhotonMapIntegrator>();
-    else if (type == "progressive_photon_map")
-        result = std::make_shared<ProgressivePhotonMapIntegrator>();
-    else if (type == "bidirectional_path_tracer")
-        result = std::make_shared<BidirectionalPathTraceIntegrator>();
-    else if (type == "kelemen_mlt")
-        result = std::make_shared<KelemenMltIntegrator>();
-    else {
-        DBG("Unknown integrator type: '%s'", type.c_str());
-        return nullptr;
-    }
-
+    std::shared_ptr<Integrator> result = std::make_shared<PathTraceIntegrator>();
     result->fromJson(value, *this);
     return result;
 }

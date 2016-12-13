@@ -296,8 +296,67 @@ struct ViewApp {
             std::string json = FileUtils::loadText(_path = Path("scene.json"));
             rapidjson::Document document;
             document.Parse<0>(json.c_str());
-            fromJson(document, *this);
-            loadResources();
+             //fromJson(document, *this);
+            const rapidjson::Value& v = document;
+            JsonSerializable::fromJson(v, (Tungsten::Scene&)*this);
+
+            auto media      = v.FindMember("media");
+            auto bsdfs      = v.FindMember("bsdfs");
+            auto primitives = v.FindMember("primitives");
+            auto camera     = v.FindMember("camera");
+            auto integrator = v.FindMember("integrator");
+            auto renderer   = v.FindMember("renderer");
+
+            if (media != v.MemberEnd() && media->value.IsArray())
+                loadObjectList(media->value, std::bind(&Scene::instantiateMedium, (Tungsten::Scene*)this,
+                        std::placeholders::_1, std::placeholders::_2), _media);
+
+            if (bsdfs != v.MemberEnd() && bsdfs->value.IsArray())
+                loadObjectList(bsdfs->value, std::bind(&Scene::instantiateBsdf, (Tungsten::Scene*)this,
+                        std::placeholders::_1, std::placeholders::_2), _bsdfs);
+
+            if (primitives != v.MemberEnd() && primitives->value.IsArray())
+                loadObjectList(primitives->value, std::bind(&Scene::instantiatePrimitive, (Tungsten::Scene*)this,
+                        std::placeholders::_1, std::placeholders::_2), _primitives);
+
+            if (camera != v.MemberEnd() && camera->value.IsObject()) {
+                auto result = instantiateCamera(JsonUtils::as<std::string>(camera->value, "type"), camera->value);
+                if (result)
+                    _camera = std::move(result);
+            }
+
+            if (integrator != v.MemberEnd() && integrator->value.IsObject()) {
+                auto result = instantiateIntegrator(JsonUtils::as<std::string>(integrator->value, "type"), integrator->value);
+                if (result)
+                    _integrator = std::move(result);
+            }
+
+            if (renderer != v.MemberEnd() && renderer->value.IsObject())
+                _rendererSettings.fromJson(renderer->value, *this);
+
+            for (const std::shared_ptr<Medium> &b : _media)
+                b->loadResources();
+            for (const std::shared_ptr<Bsdf> &b : _bsdfs)
+                b->loadResources();
+            for (const std::shared_ptr<Primitive> &t : _primitives)
+                t->loadResources();
+
+            _camera->loadResources();
+            _integrator->loadResources();
+            _rendererSettings.loadResources();
+
+            _textureCache->loadResources();
+
+            for (size_t i = 0; i < _primitives.size(); ++i) {
+                auto helperPrimitives = _primitives[i]->createHelperPrimitives();
+                if (!helperPrimitives.empty()) {
+                    _primitives.reserve(_primitives.size() + helperPrimitives.size());
+                    for (size_t t = 0; t < helperPrimitives.size(); ++t) {
+                        _helperPrimitives.insert(helperPrimitives[t].get());
+                        _primitives.emplace_back(std::move(helperPrimitives[t]));
+                    }
+                }
+            }
         }
     } scene;
     Tungsten::TraceableScene flattenedScene {*scene._camera, *scene._integrator, scene._primitives, scene._bsdfs, scene._media, scene._rendererSettings, (uint32)readCycleCounter()};
